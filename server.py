@@ -5,6 +5,7 @@
 #     "pymobiledevice3>=4.14",
 #     "starlette>=1.0",
 #     "uvicorn[standard]>=0.44",
+#     "httpx>=0.28",
 # ]
 # ///
 """
@@ -32,6 +33,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+import math
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import FileResponse, JSONResponse
@@ -398,6 +401,10 @@ async def index(request):
     return FileResponse(STATIC_DIR / "index.html")
 
 
+async def walk_page(request):
+    return FileResponse(STATIC_DIR / "walk.html")
+
+
 async def config_get(request):
     state = _read_state()
     return JSONResponse({
@@ -511,6 +518,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             action = msg.get("type")
             if action == "start":
                 await _handle_start(websocket, msg)
+            elif action == "start_road_walk":
+                await _handle_start_road_walk(websocket, msg)
             elif action == "stop":
                 await _handle_stop(websocket)
             elif action == "teleport":
@@ -640,6 +649,121 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
     session.running_task = asyncio.create_task(runner())
 
 
+# --- OSRM Road Walk -----------------------------------------------------------
+
+OSRM_BASE = "https://router.project-osrm.org/route/v1/foot"
+
+
+async def _osrm_route(
+    start: tuple[float, float], end: tuple[float, float]
+) -> list[tuple[float, float]] | None:
+    """Query OSRM for a walking route. Returns list of (lat, lon) or None."""
+    url = (
+        f"{OSRM_BASE}/{start[1]},{start[0]};{end[1]},{end[0]}"
+        "?overview=full&geometries=geojson"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("code") != "Ok" or not data.get("routes"):
+            return None
+        coords = data["routes"][0]["geometry"]["coordinates"]
+        # GeoJSON is [lon, lat] — flip to (lat, lon)
+        return [(c[1], c[0]) for c in coords]
+    except Exception:
+        return None
+
+
+def _random_point_in_radius(
+    center: tuple[float, float], radius_m: float, rng: random.Random
+) -> tuple[float, float]:
+    """Pick a uniformly random point within `radius_m` of `center`."""
+    # Square-root for uniform area distribution
+    r = radius_m * math.sqrt(rng.random())
+    theta = rng.uniform(0, 2 * math.pi)
+    from pikmin_walk import destination_point
+    return destination_point(center, theta, r)
+
+
+async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
+    try:
+        center_lat = float(msg["lat"])
+        center_lon = float(msg["lon"])
+    except (KeyError, TypeError, ValueError):
+        await ws.send_json({"type": "error", "message": "need lat, lon"})
+        return
+    radius_m = float(msg.get("radius_m", 400))
+    speed_kmh = float(msg.get("speed_kmh", 19))
+
+    if session.loc_sim is None:
+        await ws.send_json({"type": "error", "message": "手機未連線"})
+        return
+    if session.running_task and not session.running_task.done():
+        await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
+        return
+
+    center = (center_lat, center_lon)
+    speed_mps = speed_kmh * 1000 / 3600
+    tick_s = 1.0
+
+    async def runner() -> None:
+        rng = random.Random()
+        current = center
+        try:
+            await ws.send_json({"type": "road_walk_started"})
+
+            while True:
+                # 1. Pick a random destination within radius
+                dest = _random_point_in_radius(center, radius_m, rng)
+
+                # 2. Get a road-following route from OSRM
+                route = await _osrm_route(current, dest)
+                if route is None or len(route) < 2:
+                    # OSRM couldn't route (maybe in the ocean) — try again
+                    continue
+
+                # 3. Send planned route to UI
+                await ws.send_json({
+                    "type": "road_walk_leg",
+                    "route": [[p[0], p[1]] for p in route],
+                })
+
+                # 4. Walk along the route waypoints
+                from pikmin_walk import haversine_m, step_toward, jitter_position
+                pos = route[0]
+                await session.set_location(*pos)
+
+                for target in route[1:]:
+                    while haversine_m(pos, target) > 1.0:
+                        step_m = speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
+                        step_m = max(0.5, step_m)
+                        pos = step_toward(pos, target, step_m)
+                        noisy = jitter_position(pos, 1.0, rng)
+                        await session.set_location(*noisy)
+                        actual_step = haversine_m(pos, noisy)
+                        await ws.send_json({
+                            "type": "tick",
+                            "lat": noisy[0],
+                            "lon": noisy[1],
+                            "step_m": step_m,
+                        })
+                        await asyncio.sleep(tick_s)
+
+                # 5. Arrived at destination — it becomes next start
+                current = pos
+
+        except asyncio.CancelledError:
+            try:
+                await ws.send_json({"type": "stopped"})
+            except Exception:
+                pass
+            raise
+
+    session.running_task = asyncio.create_task(runner())
+
+
 async def _handle_teleport(ws: WebSocket, msg: dict) -> None:
     if session.loc_sim is None:
         await ws.send_json({"type": "error", "message": "手機還沒連上"})
@@ -701,6 +825,7 @@ app = Starlette(
     debug=False,
     routes=[
         Route("/", index),
+        Route("/walk", walk_page),
         Route("/api/profiles", profiles_endpoint),
         Route("/api/config", config_get, methods=["GET"]),
         Route("/api/config", config_post, methods=["POST"]),

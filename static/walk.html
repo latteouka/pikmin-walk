@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pikmin Walker — Road Walk</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: rgba(30,41,59,0.92);
+      --panel-solid: #1e293b;
+      --border: #475569;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --danger: #ef4444;
+      --success: #10b981;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
+    body { color: var(--text); overflow: hidden; }
+    #map { width: 100%; height: 100%; }
+    .leaflet-container { font-family: inherit; }
+
+    /* Floating control panel */
+    #panel {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px 24px;
+      min-width: 380px;
+      max-width: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .panel-title { font-size: 16px; font-weight: 600; }
+    .panel-title .dot { color: var(--accent); }
+    #deviceStatus {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: var(--panel-solid);
+      border: 1px solid var(--border);
+    }
+    #deviceStatus.ok { border-color: var(--success); color: var(--success); }
+    #deviceStatus.err { border-color: var(--danger); color: var(--danger); }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .control-row label {
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 50px;
+      text-align: right;
+    }
+    .control-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+    }
+    .control-row .value {
+      font-size: 13px;
+      font-weight: 600;
+      min-width: 64px;
+      text-align: left;
+      font-family: ui-monospace, monospace;
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .stat {
+      text-align: center;
+      padding: 8px;
+      background: var(--panel-solid);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .stat .num {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: ui-monospace, monospace;
+    }
+    .stat .label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    .btn-row { display: flex; gap: 8px; }
+    .btn-row button {
+      flex: 1;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text);
+      background: var(--panel-solid);
+    }
+    .btn-row button:hover:not(:disabled) { background: var(--border); }
+    .btn-row button.primary { background: var(--accent); border-color: var(--accent); }
+    .btn-row button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-row button.danger { background: var(--danger); border-color: var(--danger); }
+    .btn-row button.danger:hover:not(:disabled) { background: #b91c1c; }
+    .btn-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #statusLine {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      min-height: 16px;
+    }
+    #statusLine.running { color: var(--accent); }
+    #statusLine.error { color: var(--danger); }
+    #statusLine.done { color: var(--success); }
+
+    .layer-control {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      display: flex; gap: 4px;
+      background: var(--panel); padding: 4px; border-radius: 8px;
+      backdrop-filter: blur(8px);
+    }
+    .layer-control button {
+      padding: 6px 10px; font-size: 11px; font-weight: 500;
+      background: transparent; border: 1px solid var(--border);
+      border-radius: 5px; color: var(--muted); cursor: pointer;
+    }
+    .layer-control button.active {
+      background: var(--accent); border-color: var(--accent); color: white;
+    }
+
+    .back-link {
+      position: absolute; top: 10px; left: 10px; z-index: 1000;
+      padding: 6px 14px; font-size: 12px; font-weight: 500;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--muted); text-decoration: none;
+      backdrop-filter: blur(8px);
+    }
+    .back-link:hover { color: var(--text); border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <a class="back-link" href="/">← 主控台</a>
+
+  <div class="layer-control" id="layerControl">
+    <button data-layer="google" class="active">Google</button>
+    <button data-layer="satellite">衛星</button>
+    <button data-layer="osm">OSM</button>
+  </div>
+
+  <div id="panel">
+    <div class="panel-header">
+      <span class="panel-title"><span class="dot">●</span> 道路漫步</span>
+      <span id="deviceStatus">連線中…</span>
+    </div>
+
+    <div class="control-row">
+      <label>速度</label>
+      <input type="range" id="speed" min="3" max="25" value="19" step="1">
+      <span class="value" id="speedVal">19 km/h</span>
+    </div>
+    <div class="control-row">
+      <label>半徑</label>
+      <input type="range" id="radius" min="100" max="2000" value="400" step="50">
+      <span class="value" id="radiusVal">400 m</span>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km 走了</div></div>
+      <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
+      <div class="stat"><div class="num" id="statLegs">0</div><div class="label">路段</div></div>
+    </div>
+
+    <div class="btn-row">
+      <button id="btnStart" class="primary">▶ 開始漫步</button>
+      <button id="btnStop" class="danger" disabled>■ 停止</button>
+    </div>
+
+    <div id="statusLine">讀取裝置位置中…</div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ---- Map ----
+const map = L.map('map', { zoomControl: false }).setView([25.033, 121.565], 15);
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+const tileLayers = {
+  google: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 21 }),
+  satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', { maxZoom: 21 }),
+  osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }),
+};
+let currentTile = tileLayers.google;
+currentTile.addTo(map);
+
+document.getElementById('layerControl').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-layer]');
+  if (!btn) return;
+  const key = btn.dataset.layer;
+  if (!tileLayers[key] || tileLayers[key] === currentTile) return;
+  map.removeLayer(currentTile);
+  currentTile = tileLayers[key];
+  currentTile.addTo(map);
+  document.querySelectorAll('#layerControl button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+});
+
+// ---- Map layers ----
+let deviceMarker = null;
+let radiusCircle = null;
+const trailLine = L.polyline([], { color: '#ef4444', weight: 4, opacity: 0.9 }).addTo(map);
+const routeLine = L.polyline([], { color: '#3b82f6', weight: 3, opacity: 0.6, dashArray: '6,8' }).addTo(map);
+
+function updateDevice(lat, lon, pan = false) {
+  const ll = [lat, lon];
+  if (!deviceMarker) {
+    deviceMarker = L.circleMarker(ll, {
+      radius: 9, color: '#fff', weight: 2,
+      fillColor: '#ef4444', fillOpacity: 1,
+    }).addTo(map);
+  } else {
+    deviceMarker.setLatLng(ll);
+  }
+  if (pan) map.setView(ll, Math.max(map.getZoom(), 15));
+}
+
+function updateRadius(lat, lon, meters) {
+  if (radiusCircle) map.removeLayer(radiusCircle);
+  radiusCircle = L.circle([lat, lon], {
+    radius: meters,
+    color: '#10b981', weight: 2, fillColor: '#10b981',
+    fillOpacity: 0.06, dashArray: '4,6',
+  }).addTo(map);
+}
+
+// ---- Controls ----
+const $speed = document.getElementById('speed');
+const $radius = document.getElementById('radius');
+const $speedVal = document.getElementById('speedVal');
+const $radiusVal = document.getElementById('radiusVal');
+const $btnStart = document.getElementById('btnStart');
+const $btnStop = document.getElementById('btnStop');
+const $status = document.getElementById('statusLine');
+const $deviceStatus = document.getElementById('deviceStatus');
+const $statDist = document.getElementById('statDist');
+const $statTime = document.getElementById('statTime');
+const $statLegs = document.getElementById('statLegs');
+
+$speed.addEventListener('input', () => { $speedVal.textContent = `${$speed.value} km/h`; });
+$radius.addEventListener('input', () => {
+  $radiusVal.textContent = `${$radius.value} m`;
+  if (deviceMarker) {
+    const ll = deviceMarker.getLatLng();
+    updateRadius(ll.lat, ll.lng, parseInt($radius.value));
+  }
+});
+
+function setStatus(text, cls = '') { $status.textContent = text; $status.className = cls; }
+
+// ---- Stats ----
+let totalDist = 0;
+let startTime = null;
+let legCount = 0;
+let statsTimer = null;
+
+function resetStats() {
+  totalDist = 0; startTime = null; legCount = 0;
+  $statDist.textContent = '0.0'; $statTime.textContent = '0:00'; $statLegs.textContent = '0';
+  if (statsTimer) clearInterval(statsTimer);
+}
+
+function startStatsTimer() {
+  startTime = Date.now();
+  statsTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const m = Math.floor(s / 60);
+    $statTime.textContent = `${m}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+}
+
+// ---- WebSocket ----
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => {};
+  ws.onclose = () => { setStatus('WebSocket 斷線，3 秒後重連', 'error'); setTimeout(connectWS, 3000); };
+  ws.onerror = () => setStatus('WebSocket error', 'error');
+  ws.onmessage = (ev) => handleMessage(JSON.parse(ev.data));
+}
+
+function handleMessage(m) {
+  switch (m.type) {
+    case 'hello':
+      if (m.device) {
+        $deviceStatus.textContent = m.device.product;
+        $deviceStatus.className = 'ok';
+      } else {
+        $deviceStatus.textContent = '未連線';
+        $deviceStatus.className = 'err';
+      }
+      if (m.last_position) {
+        updateDevice(m.last_position.lat, m.last_position.lon, true);
+        updateRadius(m.last_position.lat, m.last_position.lon, parseInt($radius.value));
+        setStatus(`目前位置 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
+      } else {
+        setStatus('手機位置未知 — 先在主控台瞬移到某處');
+      }
+      break;
+
+    case 'road_walk_started':
+      $btnStart.disabled = true;
+      $btnStop.disabled = false;
+      resetStats();
+      startStatsTimer();
+      trailLine.setLatLngs([]);
+      setStatus('漫步中…', 'running');
+      break;
+
+    case 'road_walk_leg':
+      // New route segment planned — show on map as blue dashed line
+      legCount++;
+      $statLegs.textContent = String(legCount);
+      if (m.route && m.route.length > 0) {
+        routeLine.setLatLngs(m.route.map(p => [p[0], p[1]]));
+      }
+      break;
+
+    case 'tick': {
+      updateDevice(m.lat, m.lon);
+      trailLine.addLatLng([m.lat, m.lon]);
+      totalDist += (m.step_m || 0);
+      $statDist.textContent = (totalDist / 1000).toFixed(2);
+      break;
+    }
+
+    case 'road_walk_done':
+    case 'done':
+      setStatus('漫步完成', 'done');
+      $btnStart.disabled = false;
+      $btnStop.disabled = true;
+      if (statsTimer) clearInterval(statsTimer);
+      break;
+
+    case 'stopped':
+      setStatus('已停止');
+      $btnStart.disabled = false;
+      $btnStop.disabled = true;
+      if (statsTimer) clearInterval(statsTimer);
+      break;
+
+    case 'error':
+      setStatus(`Error: ${m.message}`, 'error');
+      $btnStart.disabled = false;
+      $btnStop.disabled = true;
+      if (statsTimer) clearInterval(statsTimer);
+      break;
+
+    case 'teleported':
+      updateDevice(m.lat, m.lon, true);
+      updateRadius(m.lat, m.lon, parseInt($radius.value));
+      setStatus(`位置已更新 ${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}`);
+      break;
+  }
+}
+
+$btnStart.addEventListener('click', () => {
+  if (!deviceMarker) {
+    setStatus('手機位置未知 — 先在主控台瞬移', 'error');
+    return;
+  }
+  const ll = deviceMarker.getLatLng();
+  ws.send(JSON.stringify({
+    type: 'start_road_walk',
+    lat: ll.lat,
+    lon: ll.lng,
+    radius_m: parseInt($radius.value),
+    speed_kmh: parseInt($speed.value),
+  }));
+});
+
+$btnStop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
+
+connectWS();
+</script>
+</body>
+</html>
