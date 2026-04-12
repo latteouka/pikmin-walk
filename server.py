@@ -10,7 +10,7 @@
 """
 Web UI for iOS location simulation.
 
-Open http://localhost:8765 in a browser, click the map to drop waypoints,
+Open http://localhost:7766 in a browser, click the map to drop waypoints,
 pick a profile (walk/drive/transit/flight), hit Start, and watch the
 phone (and the UI) move along the route in real time.
 
@@ -21,7 +21,7 @@ Run (terminal B):
     cd ~/projects/chores/pikmin-walk
     uv run server.py
 
-Then open http://localhost:8765
+Then open http://localhost:7766
 """
 from __future__ import annotations
 
@@ -716,5 +716,5 @@ app = Starlette(
 
 
 if __name__ == "__main__":
-    print("Pikmin Walker UI  →  http://localhost:8765")
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    print("Pikmin Walker UI  →  http://localhost:7766")
+    uvicorn.run(app, host="127.0.0.1", port=7766, log_level="warning")
