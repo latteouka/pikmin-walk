@@ -182,6 +182,11 @@
       <span id="deviceStatus">連線中…</span>
     </div>
 
+    <div class="mode-toggle" style="display:grid;grid-template-columns:1fr 1fr;gap:0;background:var(--panel-solid);border:1px solid var(--border);border-radius:8px;padding:3px;">
+      <button id="modeRandom" class="active" style="padding:8px;font-size:12px;background:transparent;border:none;border-radius:6px;color:var(--muted);font-weight:500;cursor:pointer;">🎲 隨機漫步</button>
+      <button id="modeLoop" style="padding:8px;font-size:12px;background:transparent;border:none;border-radius:6px;color:var(--muted);font-weight:500;cursor:pointer;">🔄 循環路線</button>
+    </div>
+
     <div class="control-row">
       <label>速度</label>
       <input type="range" id="speed" min="3" max="25" value="19" step="1">
@@ -189,14 +194,19 @@
     </div>
     <div class="control-row">
       <label>半徑</label>
-      <input type="range" id="radius" min="100" max="2000" value="400" step="50">
-      <span class="value" id="radiusVal">400 m</span>
+      <input type="range" id="radius" min="100" max="10000" value="5000" step="100">
+      <span class="value" id="radiusVal">5000 m</span>
+    </div>
+    <div class="control-row" id="loopPointsRow" style="display:none;">
+      <label>轉角數</label>
+      <input type="range" id="loopPoints" min="4" max="12" value="6" step="1">
+      <span class="value" id="loopPointsVal">6 個</span>
     </div>
 
     <div class="stats-row">
       <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km 走了</div></div>
       <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
-      <div class="stat"><div class="num" id="statLegs">0</div><div class="label">路段</div></div>
+      <div class="stat"><div class="num" id="statLaps">0</div><div class="label" id="statLapsLabel">路段</div></div>
     </div>
 
     <div class="btn-row">
@@ -210,7 +220,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ---- Map ----
-const map = L.map('map', { zoomControl: false }).setView([25.033, 121.565], 15);
+const map = L.map('map', { zoomControl: false }).setView([46.4904, -80.9938], 13);
 L.control.zoom({ position: 'topright' }).addTo(map);
 
 const tileLayers = {
@@ -272,8 +282,38 @@ const $status = document.getElementById('statusLine');
 const $deviceStatus = document.getElementById('deviceStatus');
 const $statDist = document.getElementById('statDist');
 const $statTime = document.getElementById('statTime');
-const $statLegs = document.getElementById('statLegs');
+const $statLaps = document.getElementById('statLaps');
+const $loopPoints = document.getElementById('loopPoints');
+const $loopPointsVal = document.getElementById('loopPointsVal');
 
+let walkMode = 'random';  // 'random' | 'loop'
+
+document.getElementById('modeRandom').addEventListener('click', () => {
+  walkMode = 'random';
+  document.getElementById('modeRandom').classList.add('active');
+  document.getElementById('modeRandom').style.background = 'var(--accent)';
+  document.getElementById('modeRandom').style.color = 'white';
+  document.getElementById('modeLoop').classList.remove('active');
+  document.getElementById('modeLoop').style.background = 'transparent';
+  document.getElementById('modeLoop').style.color = 'var(--muted)';
+  document.getElementById('loopPointsRow').style.display = 'none';
+  $btnStart.textContent = '▶ 開始漫步';
+  document.getElementById('statLapsLabel').textContent = '路段';
+});
+document.getElementById('modeLoop').addEventListener('click', () => {
+  walkMode = 'loop';
+  document.getElementById('modeLoop').classList.add('active');
+  document.getElementById('modeLoop').style.background = 'var(--accent)';
+  document.getElementById('modeLoop').style.color = 'white';
+  document.getElementById('modeRandom').classList.remove('active');
+  document.getElementById('modeRandom').style.background = 'transparent';
+  document.getElementById('modeRandom').style.color = 'var(--muted)';
+  document.getElementById('loopPointsRow').style.display = 'flex';
+  $btnStart.textContent = '▶ 開始循環';
+  document.getElementById('statLapsLabel').textContent = '圈';
+});
+
+$loopPoints.addEventListener('input', () => { $loopPointsVal.textContent = `${$loopPoints.value} 個`; });
 $speed.addEventListener('input', () => { $speedVal.textContent = `${$speed.value} km/h`; });
 $radius.addEventListener('input', () => {
   $radiusVal.textContent = `${$radius.value} m`;
@@ -293,7 +333,7 @@ let statsTimer = null;
 
 function resetStats() {
   totalDist = 0; startTime = null; legCount = 0;
-  $statDist.textContent = '0.0'; $statTime.textContent = '0:00'; $statLegs.textContent = '0';
+  $statDist.textContent = '0.0'; $statTime.textContent = '0:00'; $statLaps.textContent = '0';
   if (statsTimer) clearInterval(statsTimer);
 }
 
@@ -329,7 +369,13 @@ function handleMessage(m) {
       if (m.last_position) {
         updateDevice(m.last_position.lat, m.last_position.lon, true);
         updateRadius(m.last_position.lat, m.last_position.lon, parseInt($radius.value));
-        setStatus(`目前位置 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
+        // Auto re-push to phone so the app has a GPS fix immediately
+        ws.send(JSON.stringify({
+          type: 'teleport',
+          lat: m.last_position.lat,
+          lon: m.last_position.lon,
+        }));
+        setStatus(`位置已同步 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
       } else {
         setStatus('手機位置未知 — 先在主控台瞬移到某處');
       }
@@ -344,10 +390,27 @@ function handleMessage(m) {
       setStatus('漫步中…', 'running');
       break;
 
-    case 'road_walk_leg':
-      // New route segment planned — show on map as blue dashed line
+    case 'loop_walk_started':
+      $btnStart.disabled = true;
+      $btnStop.disabled = false;
+      resetStats();
+      startStatsTimer();
+      trailLine.setLatLngs([]);
+      if (m.loop_route && m.loop_route.length > 0) {
+        routeLine.setLatLngs(m.loop_route.map(p => [p[0], p[1]]));
+        map.fitBounds(routeLine.getBounds().pad(0.1));
+      }
+      setStatus(`循環路線 ${(m.loop_distance_km || 0).toFixed(1)} km/圈`, 'running');
+      break;
+
+    case 'loop_lap':
       legCount++;
-      $statLegs.textContent = String(legCount);
+      $statLaps.textContent = String(legCount);
+      break;
+
+    case 'road_walk_leg':
+      legCount++;
+      $statLaps.textContent = String(legCount);
       if (m.route && m.route.length > 0) {
         routeLine.setLatLngs(m.route.map(p => [p[0], p[1]]));
       }
@@ -397,13 +460,17 @@ $btnStart.addEventListener('click', () => {
     return;
   }
   const ll = deviceMarker.getLatLng();
-  ws.send(JSON.stringify({
-    type: 'start_road_walk',
+  const msg = {
+    type: walkMode === 'loop' ? 'start_loop_walk' : 'start_road_walk',
     lat: ll.lat,
     lon: ll.lng,
     radius_m: parseInt($radius.value),
     speed_kmh: parseInt($speed.value),
-  }));
+  };
+  if (walkMode === 'loop') {
+    msg.num_points = parseInt($loopPoints.value);
+  }
+  ws.send(JSON.stringify(msg));
 });
 
 $btnStop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));

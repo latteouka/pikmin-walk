@@ -381,10 +381,13 @@
       <div id="status">idle</div>
     </div>
 
-    <div class="hint" style="margin-top: auto;">
-      後端持續跑 RemoteXPC 隧道到手機，前端用 WebSocket 即時接收位置。
-      關掉瀏覽器會自動停止模擬並還原 GPS。
-    </div>
+    <a href="/walk" style="
+      display: block; text-align: center; padding: 12px;
+      margin-top: auto;
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--accent); text-decoration: none;
+      font-size: 14px; font-weight: 500;
+    ">🚶 道路漫步模式 →</a>
   </aside>
 </div>
 
@@ -714,7 +717,13 @@ function handleMessage(m) {
       if (m.last_position) {
         updateDeviceMarker(m.last_position.lat, m.last_position.lon, { pan: true });
         map.setView([m.last_position.lat, m.last_position.lon], 14);
-        setStatus(`手機在 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
+        // Auto re-push to phone so the app has a GPS fix immediately
+        ws.send(JSON.stringify({
+          type: 'teleport',
+          lat: m.last_position.lat,
+          lon: m.last_position.lon,
+        }));
+        setStatus(`位置已同步 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
       }
       break;
     case 'teleported':

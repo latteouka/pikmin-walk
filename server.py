@@ -520,6 +520,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 await _handle_start(websocket, msg)
             elif action == "start_road_walk":
                 await _handle_start_road_walk(websocket, msg)
+            elif action == "start_loop_walk":
+                await _handle_start_loop_walk(websocket, msg)
             elif action == "stop":
                 await _handle_stop(websocket)
             elif action == "teleport":
@@ -753,6 +755,126 @@ async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
 
                 # 5. Arrived at destination — it becomes next start
                 current = pos
+
+        except asyncio.CancelledError:
+            try:
+                await ws.send_json({"type": "stopped"})
+            except Exception:
+                pass
+            raise
+
+    session.running_task = asyncio.create_task(runner())
+
+
+async def _generate_loop_waypoints(
+    center: tuple[float, float], radius_m: float, num_points: int, rng: random.Random
+) -> list[tuple[float, float]]:
+    """Generate N waypoints in a rough circle around center, then close the loop."""
+    from pikmin_walk import destination_point
+    points = []
+    base_angle = rng.uniform(0, 2 * math.pi)
+    for i in range(num_points):
+        angle = base_angle + (2 * math.pi * i / num_points)
+        # ±15% radius jitter + ±15° angle jitter for natural shape
+        r = radius_m * (0.7 + rng.random() * 0.6)
+        a = angle + rng.gauss(0, math.radians(15))
+        points.append(destination_point(center, a, r))
+    points.append(points[0])  # close the loop
+    return points
+
+
+async def _osrm_loop_route(
+    waypoints: list[tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    """Query OSRM for a walking route through all waypoints (loop)."""
+    coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
+    url = f"{OSRM_BASE}/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("code") != "Ok" or not data.get("routes"):
+            return None
+        coords = data["routes"][0]["geometry"]["coordinates"]
+        return [(c[1], c[0]) for c in coords]
+    except Exception:
+        return None
+
+
+async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
+    try:
+        center_lat = float(msg["lat"])
+        center_lon = float(msg["lon"])
+    except (KeyError, TypeError, ValueError):
+        await ws.send_json({"type": "error", "message": "need lat, lon"})
+        return
+    radius_m = float(msg.get("radius_m", 5000))
+    speed_kmh = float(msg.get("speed_kmh", 19))
+    num_points = int(msg.get("num_points", 6))
+    num_points = max(3, min(num_points, 16))
+
+    if session.loc_sim is None:
+        await ws.send_json({"type": "error", "message": "手機未連線"})
+        return
+    if session.running_task and not session.running_task.done():
+        await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
+        return
+
+    center = (center_lat, center_lon)
+    speed_mps = speed_kmh * 1000 / 3600
+    tick_s = 1.0
+
+    async def runner() -> None:
+        rng = random.Random()
+        from pikmin_walk import haversine_m, step_toward, jitter_position
+
+        try:
+            # 1. Generate loop waypoints
+            loop_wps = await _generate_loop_waypoints(center, radius_m, num_points, rng)
+
+            # 2. Get OSRM route for the whole loop
+            await ws.send_json({"type": "road_walk_leg", "route": [[p[0], p[1]] for p in loop_wps]})
+            route = await _osrm_loop_route(loop_wps)
+            if route is None or len(route) < 2:
+                await ws.send_json({"type": "error", "message": "OSRM 無法規劃此循環路線，換個位置試試"})
+                return
+
+            # Calculate loop distance
+            loop_dist = sum(
+                haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1)
+            )
+
+            await ws.send_json({
+                "type": "loop_walk_started",
+                "loop_route": [[p[0], p[1]] for p in route],
+                "loop_distance_km": loop_dist / 1000,
+                "num_points": num_points,
+            })
+
+            # 3. Walk the loop forever
+            lap = 0
+            while True:
+                lap += 1
+                await ws.send_json({"type": "loop_lap", "lap": lap})
+
+                pos = route[0]
+                await session.set_location(*pos)
+
+                for target in route[1:]:
+                    while haversine_m(pos, target) > 1.0:
+                        step_m = speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
+                        step_m = max(0.5, step_m)
+                        pos = step_toward(pos, target, step_m)
+                        noisy = jitter_position(pos, 1.0, rng)
+                        await session.set_location(*noisy)
+                        await ws.send_json({
+                            "type": "tick",
+                            "lat": noisy[0],
+                            "lon": noisy[1],
+                            "step_m": step_m,
+                        })
+                        await asyncio.sleep(tick_s)
 
         except asyncio.CancelledError:
             try:
