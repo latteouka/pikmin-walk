@@ -295,6 +295,10 @@ class DeviceSession:
         self.product: str | None = None
         self.path: str | None = None  # "dvt" or "legacy"
         self.running_task: asyncio.Task | None = None
+        # Live speed — can be changed mid-run via WS "set_speed" message.
+        self.live_speed_kmh: float = 19.0
+        # Pause flag — runners check each tick and sleep until unpaused.
+        self.paused: bool = False
         # Last coordinate we successfully pushed to the phone. The iOS
         # simulate-location service is write-only, so this cache is the
         # only way the UI can answer "where is the device right now?".
@@ -593,6 +597,17 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 await _handle_stop(websocket)
             elif action == "teleport":
                 await _handle_teleport(websocket, msg)
+            elif action == "pause":
+                session.paused = True
+                await websocket.send_json({"type": "paused"})
+            elif action == "resume":
+                session.paused = False
+                await websocket.send_json({"type": "resumed"})
+            elif action == "set_speed":
+                try:
+                    session.live_speed_kmh = max(1.0, min(50.0, float(msg.get("speed_kmh", 19))))
+                except (TypeError, ValueError):
+                    pass
             elif action == "clear":
                 if session.loc_sim is not None:
                     try:
@@ -774,7 +789,7 @@ async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
         return
 
     center = (center_lat, center_lon)
-    speed_mps = speed_kmh * 1000 / 3600
+    session.live_speed_kmh = speed_kmh
     tick_s = 1.0
 
     async def runner() -> None:
@@ -784,29 +799,24 @@ async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
             await ws.send_json({"type": "road_walk_started"})
 
             while True:
-                # 1. Pick a random destination within radius
                 dest = _random_point_in_radius(center, radius_m, rng)
-
-                # 2. Get a road-following route from OSRM
                 route = await _osrm_route(current, dest)
                 if route is None or len(route) < 2:
-                    # OSRM couldn't route (maybe in the ocean) — try again
                     continue
 
-                # 3. Send planned route to UI
                 await ws.send_json({
                     "type": "road_walk_leg",
                     "route": [[p[0], p[1]] for p in route],
                 })
 
-                # 4. Walk along the route waypoints
                 from pikmin_walk import haversine_m, step_toward, jitter_position
                 pos = route[0]
                 await session.set_location(*pos)
 
                 for target in route[1:]:
                     while haversine_m(pos, target) > 1.0:
-                        step_m = speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
+                        cur_speed_mps = session.live_speed_kmh * 1000 / 3600
+                        step_m = cur_speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
                         step_m = max(0.5, step_m)
                         pos = step_toward(pos, target, step_m)
                         noisy = jitter_position(pos, 1.0, rng)
@@ -819,6 +829,8 @@ async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
                             "step_m": step_m,
                         })
                         await asyncio.sleep(tick_s)
+                        while session.paused:
+                            await asyncio.sleep(0.5)
 
                 # 5. Arrived at destination — it becomes next start
                 current = pos
@@ -885,7 +897,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
         return
 
     route = [(float(p[0]), float(p[1])) for p in raw_route]
-    speed_mps = speed_kmh * 1000 / 3600
+    session.live_speed_kmh = speed_kmh  # initialize from the start request
     tick_s = 1.0
 
     async def runner() -> None:
@@ -910,7 +922,9 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
                 for target in route[1:]:
                     while haversine_m(pos, target) > 1.0:
-                        step_m = speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
+                        # Read live speed each tick so slider changes apply instantly
+                        cur_speed_mps = session.live_speed_kmh * 1000 / 3600
+                        step_m = cur_speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
                         step_m = max(0.5, step_m)
                         pos = step_toward(pos, target, step_m)
                         noisy = jitter_position(pos, 1.0, rng)
@@ -922,6 +936,8 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                             "step_m": step_m,
                         })
                         await asyncio.sleep(tick_s)
+                        while session.paused:
+                            await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:
             try:

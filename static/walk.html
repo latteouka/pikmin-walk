@@ -179,6 +179,7 @@
     <div class="btn-row">
       <button id="btnPreview">🗺 預覽路線</button>
       <button id="btnStart" class="primary" disabled>▶ 開始循環</button>
+      <button id="btnPause" disabled>⏸ 暫停</button>
       <button id="btnStop" class="danger" disabled>■ 停止</button>
     </div>
 
@@ -253,6 +254,10 @@ document.querySelector('.shape-row').addEventListener('click', (e) => {
 $speed.addEventListener('input', () => {
   $speedVal.textContent = `${$speed.value} km/h`;
   updateLapTime();
+  // Live-send speed to server if running
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'set_speed', speed_kmh: parseInt($speed.value) }));
+  }
 });
 $lapDist.addEventListener('input', () => {
   $lapDistVal.textContent = `${$lapDist.value} km`;
@@ -376,7 +381,8 @@ function handleMessage(m) {
       updateDevice(m.lat, m.lon);
       break;
     case 'loop_walk_started':
-      $btnStart.disabled = true; $btnStop.disabled = false; $btnPreview.disabled = true;
+      $btnStart.disabled = true; $btnStop.disabled = false; $btnPause.disabled = false; $btnPreview.disabled = true;
+      isPaused = false; $btnPause.textContent = '⏸ 暫停';
       document.getElementById('statsRow').style.display = 'grid';
       resetStats(); startStatsTimer();
       trailLine.setLatLngs([]);
@@ -392,10 +398,23 @@ function handleMessage(m) {
       totalDist += (m.step_m || 0);
       document.getElementById('statDist').textContent = (totalDist / 1000).toFixed(1);
       break;
+    case 'paused':
+      isPaused = true;
+      $btnPause.textContent = '▶ 繼續';
+      setStatus('已暫停', '');
+      if (statsTimer) clearInterval(statsTimer);
+      break;
+    case 'resumed':
+      isPaused = false;
+      $btnPause.textContent = '⏸ 暫停';
+      setStatus('循環中…', 'running');
+      startStatsTimer();
+      break;
     case 'stopped':
     case 'done':
       setStatus(m.type === 'done' ? '完成' : '已停止');
-      $btnStart.disabled = false; $btnStop.disabled = true; $btnPreview.disabled = false;
+      $btnStart.disabled = false; $btnStop.disabled = true; $btnPause.disabled = true; $btnPreview.disabled = false;
+      isPaused = false; $btnPause.textContent = '⏸ 暫停';
       if (statsTimer) clearInterval(statsTimer);
       break;
     case 'error':
@@ -415,6 +434,17 @@ $btnStart.addEventListener('click', () => {
     speed_kmh: parseInt($speed.value),
     route: previewedRoute.route,
   }));
+});
+
+const $btnPause = document.getElementById('btnPause');
+let isPaused = false;
+
+$btnPause.addEventListener('click', () => {
+  if (isPaused) {
+    ws.send(JSON.stringify({ type: 'resume' }));
+  } else {
+    ws.send(JSON.stringify({ type: 'pause' }));
+  }
 });
 
 $btnStop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
