@@ -469,6 +469,73 @@ async def bookmarks_delete(request):
     return JSONResponse(bk)
 
 
+async def preview_loop(request):
+    """Generate loop waypoints + OSRM route for preview (no walking yet)."""
+    body = await request.json()
+    try:
+        lat = float(body["lat"])
+        lon = float(body["lon"])
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "need lat, lon"}, status_code=400)
+
+    shape = body.get("shape", "square")
+    target_km = float(body.get("lap_distance_km", 8))
+
+    # Estimate geometric radius from target road distance.
+    # Roads are typically 1.3-1.8x longer than straight-line geometry.
+    # We start with a conservative estimate and OSRM will give actual distance.
+    road_factor = 1.5
+    center = (lat, lon)
+    from pikmin_walk import destination_point
+
+    if shape == "square":
+        # Square perimeter = 4 * side. side = target / 4 / road_factor
+        side_m = (target_km * 1000) / 4 / road_factor
+        half = side_m / 2
+        waypoints = [
+            destination_point(destination_point(center, 0, half), math.pi / 2, half),          # NE
+            destination_point(destination_point(center, math.pi, half), math.pi / 2, half),     # SE
+            destination_point(destination_point(center, math.pi, half), 3 * math.pi / 2, half), # SW
+            destination_point(destination_point(center, 0, half), 3 * math.pi / 2, half),       # NW
+        ]
+    elif shape == "rect":
+        # Rectangle: long side 2x short side
+        short_m = (target_km * 1000) / 6 / road_factor  # perimeter = 2*(2s + s) = 6s
+        long_m = short_m * 2
+        waypoints = [
+            destination_point(destination_point(center, 0, long_m / 2), math.pi / 2, short_m / 2),
+            destination_point(destination_point(center, math.pi, long_m / 2), math.pi / 2, short_m / 2),
+            destination_point(destination_point(center, math.pi, long_m / 2), 3 * math.pi / 2, short_m / 2),
+            destination_point(destination_point(center, 0, long_m / 2), 3 * math.pi / 2, short_m / 2),
+        ]
+    else:  # circle
+        n = 8
+        geo_perimeter = (target_km * 1000) / road_factor
+        radius_m = geo_perimeter / (2 * math.pi)
+        waypoints = []
+        for i in range(n):
+            angle = 2 * math.pi * i / n
+            waypoints.append(destination_point(center, angle, radius_m))
+
+    # Close the loop
+    waypoints.append(waypoints[0])
+
+    # Query OSRM
+    route = await _osrm_loop_route(waypoints)
+    if route is None:
+        return JSONResponse({"error": "OSRM 無法規劃路線，試試換位置或縮小距離"})
+
+    from pikmin_walk import haversine_m
+    dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
+
+    return JSONResponse({
+        "route": [[p[0], p[1]] for p in route],
+        "waypoints": [[p[0], p[1]] for p in waypoints],
+        "distance_km": dist / 1000,
+        "shape": shape,
+    })
+
+
 async def profiles_endpoint(request):
     return JSONResponse(
         {
@@ -803,17 +870,13 @@ async def _osrm_loop_route(
 
 
 async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
-    try:
-        center_lat = float(msg["lat"])
-        center_lon = float(msg["lon"])
-    except (KeyError, TypeError, ValueError):
-        await ws.send_json({"type": "error", "message": "need lat, lon"})
-        return
-    radius_m = float(msg.get("radius_m", 5000))
+    """Walk a pre-computed route (from /api/preview-loop) in an infinite loop."""
+    raw_route = msg.get("route")
     speed_kmh = float(msg.get("speed_kmh", 19))
-    num_points = int(msg.get("num_points", 6))
-    num_points = max(3, min(num_points, 16))
 
+    if not raw_route or len(raw_route) < 2:
+        await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
+        return
     if session.loc_sim is None:
         await ws.send_json({"type": "error", "message": "手機未連線"})
         return
@@ -821,7 +884,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
         await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
         return
 
-    center = (center_lat, center_lon)
+    route = [(float(p[0]), float(p[1])) for p in raw_route]
     speed_mps = speed_kmh * 1000 / 3600
     tick_s = 1.0
 
@@ -830,29 +893,13 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
         from pikmin_walk import haversine_m, step_toward, jitter_position
 
         try:
-            # 1. Generate loop waypoints
-            loop_wps = await _generate_loop_waypoints(center, radius_m, num_points, rng)
-
-            # 2. Get OSRM route for the whole loop
-            await ws.send_json({"type": "road_walk_leg", "route": [[p[0], p[1]] for p in loop_wps]})
-            route = await _osrm_loop_route(loop_wps)
-            if route is None or len(route) < 2:
-                await ws.send_json({"type": "error", "message": "OSRM 無法規劃此循環路線，換個位置試試"})
-                return
-
-            # Calculate loop distance
-            loop_dist = sum(
-                haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1)
-            )
-
+            loop_dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
             await ws.send_json({
                 "type": "loop_walk_started",
                 "loop_route": [[p[0], p[1]] for p in route],
                 "loop_distance_km": loop_dist / 1000,
-                "num_points": num_points,
             })
 
-            # 3. Walk the loop forever
             lap = 0
             while True:
                 lap += 1
@@ -948,6 +995,7 @@ app = Starlette(
     routes=[
         Route("/", index),
         Route("/walk", walk_page),
+        Route("/api/preview-loop", preview_loop, methods=["POST"]),
         Route("/api/profiles", profiles_endpoint),
         Route("/api/config", config_get, methods=["GET"]),
         Route("/api/config", config_post, methods=["POST"]),

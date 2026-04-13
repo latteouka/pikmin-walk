@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pikmin Walker — Road Walk</title>
+  <title>Pikmin Walker — Loop</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     :root {
@@ -17,7 +17,6 @@
       --accent-hover: #2563eb;
       --danger: #ef4444;
       --success: #10b981;
-      --warn: #f59e0b;
     }
     * { box-sizing: border-box; margin: 0; }
     html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
@@ -25,7 +24,6 @@
     #map { width: 100%; height: 100%; }
     .leaflet-container { font-family: inherit; }
 
-    /* Floating control panel */
     #panel {
       position: absolute;
       bottom: 24px;
@@ -37,124 +35,97 @@
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 20px 24px;
-      min-width: 380px;
-      max-width: 460px;
+      min-width: 420px;
+      max-width: 500px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
     .panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between;
     }
     .panel-title { font-size: 16px; font-weight: 600; }
     .panel-title .dot { color: var(--accent); }
     #deviceStatus {
-      font-size: 11px;
-      padding: 4px 10px;
-      border-radius: 20px;
-      background: var(--panel-solid);
-      border: 1px solid var(--border);
+      font-size: 11px; padding: 4px 10px; border-radius: 20px;
+      background: var(--panel-solid); border: 1px solid var(--border);
     }
     #deviceStatus.ok { border-color: var(--success); color: var(--success); }
-    #deviceStatus.err { border-color: var(--danger); color: var(--danger); }
+
+    .shape-row {
+      display: flex; gap: 6px;
+    }
+    .shape-row button {
+      flex: 1; padding: 10px; font-size: 13px; font-weight: 500;
+      font-family: inherit; background: var(--panel-solid);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); cursor: pointer; transition: all 0.15s;
+    }
+    .shape-row button.active {
+      background: var(--accent); border-color: var(--accent); color: white;
+    }
 
     .control-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      display: flex; align-items: center; gap: 12px;
     }
     .control-row label {
-      font-size: 12px;
-      color: var(--muted);
-      min-width: 50px;
-      text-align: right;
+      font-size: 12px; color: var(--muted); min-width: 60px; text-align: right;
     }
-    .control-row input[type="range"] {
-      flex: 1;
-      accent-color: var(--accent);
-    }
+    .control-row input[type="range"] { flex: 1; accent-color: var(--accent); }
     .control-row .value {
-      font-size: 13px;
-      font-weight: 600;
-      min-width: 64px;
-      text-align: left;
+      font-size: 13px; font-weight: 600; min-width: 72px;
       font-family: ui-monospace, monospace;
     }
 
+    .preview-info {
+      padding: 10px 14px; background: var(--panel-solid);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-size: 12px; color: var(--muted); text-align: center;
+      min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 16px;
+    }
+    .preview-info .pi-num { font-size: 18px; font-weight: 700; color: var(--text); font-family: ui-monospace, monospace; }
+    .preview-info .pi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .preview-info.loading { color: var(--accent); }
+    .preview-info.error { color: var(--danger); border-color: var(--danger); }
+
     .stats-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
     }
     .stat {
-      text-align: center;
-      padding: 8px;
-      background: var(--panel-solid);
-      border-radius: 8px;
-      border: 1px solid var(--border);
+      text-align: center; padding: 8px;
+      background: var(--panel-solid); border-radius: 8px; border: 1px solid var(--border);
     }
-    .stat .num {
-      font-size: 18px;
-      font-weight: 700;
-      font-family: ui-monospace, monospace;
-    }
-    .stat .label {
-      font-size: 10px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-top: 2px;
-    }
+    .stat .num { font-size: 18px; font-weight: 700; font-family: ui-monospace, monospace; }
+    .stat .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
 
     .btn-row { display: flex; gap: 8px; }
     .btn-row button {
-      flex: 1;
-      padding: 12px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: inherit;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      cursor: pointer;
-      transition: all 0.15s;
-      color: var(--text);
-      background: var(--panel-solid);
+      flex: 1; padding: 12px; font-size: 14px; font-weight: 600;
+      font-family: inherit; border: 1px solid var(--border); border-radius: 10px;
+      cursor: pointer; color: var(--text); background: var(--panel-solid);
     }
     .btn-row button:hover:not(:disabled) { background: var(--border); }
     .btn-row button.primary { background: var(--accent); border-color: var(--accent); }
     .btn-row button.primary:hover:not(:disabled) { background: var(--accent-hover); }
     .btn-row button.danger { background: var(--danger); border-color: var(--danger); }
-    .btn-row button.danger:hover:not(:disabled) { background: #b91c1c; }
     .btn-row button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    #statusLine {
-      font-size: 11px;
-      color: var(--muted);
-      text-align: center;
-      min-height: 16px;
-    }
+    #statusLine { font-size: 11px; color: var(--muted); text-align: center; }
     #statusLine.running { color: var(--accent); }
     #statusLine.error { color: var(--danger); }
-    #statusLine.done { color: var(--success); }
 
     .layer-control {
       position: absolute; top: 10px; right: 10px; z-index: 1000;
-      display: flex; gap: 4px;
-      background: var(--panel); padding: 4px; border-radius: 8px;
-      backdrop-filter: blur(8px);
+      display: flex; gap: 4px; background: var(--panel);
+      padding: 4px; border-radius: 8px; backdrop-filter: blur(8px);
     }
     .layer-control button {
       padding: 6px 10px; font-size: 11px; font-weight: 500;
       background: transparent; border: 1px solid var(--border);
       border-radius: 5px; color: var(--muted); cursor: pointer;
     }
-    .layer-control button.active {
-      background: var(--accent); border-color: var(--accent); color: white;
-    }
-
+    .layer-control button.active { background: var(--accent); border-color: var(--accent); color: white; }
     .back-link {
       position: absolute; top: 10px; left: 10px; z-index: 1000;
       padding: 6px 14px; font-size: 12px; font-weight: 500;
@@ -162,14 +133,12 @@
       border-radius: 8px; color: var(--muted); text-decoration: none;
       backdrop-filter: blur(8px);
     }
-    .back-link:hover { color: var(--text); border-color: var(--accent); }
+    .back-link:hover { color: var(--text); }
   </style>
 </head>
 <body>
   <div id="map"></div>
-
   <a class="back-link" href="/">← 主控台</a>
-
   <div class="layer-control" id="layerControl">
     <button data-layer="google" class="active">Google</button>
     <button data-layer="satellite">衛星</button>
@@ -178,13 +147,14 @@
 
   <div id="panel">
     <div class="panel-header">
-      <span class="panel-title"><span class="dot">●</span> 道路漫步</span>
+      <span class="panel-title"><span class="dot">●</span> 循環路線</span>
       <span id="deviceStatus">連線中…</span>
     </div>
 
-    <div class="mode-toggle" style="display:grid;grid-template-columns:1fr 1fr;gap:0;background:var(--panel-solid);border:1px solid var(--border);border-radius:8px;padding:3px;">
-      <button id="modeRandom" class="active" style="padding:8px;font-size:12px;background:transparent;border:none;border-radius:6px;color:var(--muted);font-weight:500;cursor:pointer;">🎲 隨機漫步</button>
-      <button id="modeLoop" style="padding:8px;font-size:12px;background:transparent;border:none;border-radius:6px;color:var(--muted);font-weight:500;cursor:pointer;">🔄 循環路線</button>
+    <div class="shape-row">
+      <button data-shape="square" class="active">⬜ 正方形</button>
+      <button data-shape="rect">▬ 長方形</button>
+      <button data-shape="circle">⭕ 圓形</button>
     </div>
 
     <div class="control-row">
@@ -193,33 +163,30 @@
       <span class="value" id="speedVal">19 km/h</span>
     </div>
     <div class="control-row">
-      <label>半徑</label>
-      <input type="range" id="radius" min="100" max="10000" value="5000" step="100">
-      <span class="value" id="radiusVal">5000 m</span>
-    </div>
-    <div class="control-row" id="loopPointsRow" style="display:none;">
-      <label>轉角數</label>
-      <input type="range" id="loopPoints" min="4" max="12" value="6" step="1">
-      <span class="value" id="loopPointsVal">6 個</span>
+      <label>每圈距離</label>
+      <input type="range" id="lapDist" min="3" max="30" value="8" step="1">
+      <span class="value" id="lapDistVal">8 km</span>
     </div>
 
-    <div class="stats-row">
-      <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km 走了</div></div>
+    <div class="preview-info" id="previewInfo">調整參數後按「預覽」</div>
+
+    <div class="stats-row" id="statsRow" style="display:none;">
+      <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km</div></div>
       <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
-      <div class="stat"><div class="num" id="statLaps">0</div><div class="label" id="statLapsLabel">路段</div></div>
+      <div class="stat"><div class="num" id="statLaps">0</div><div class="label">圈</div></div>
     </div>
 
     <div class="btn-row">
-      <button id="btnStart" class="primary">▶ 開始漫步</button>
+      <button id="btnPreview">🗺 預覽路線</button>
+      <button id="btnStart" class="primary" disabled>▶ 開始循環</button>
       <button id="btnStop" class="danger" disabled>■ 停止</button>
     </div>
 
-    <div id="statusLine">讀取裝置位置中…</div>
+    <div id="statusLine">讀取裝置位置…</div>
   </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ---- Map ----
 const map = L.map('map', { zoomControl: false }).setView([46.4904, -80.9938], 13);
 L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -230,7 +197,6 @@ const tileLayers = {
 };
 let currentTile = tileLayers.google;
 currentTile.addTo(map);
-
 document.getElementById('layerControl').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-layer]');
   if (!btn) return;
@@ -243,116 +209,151 @@ document.getElementById('layerControl').addEventListener('click', (e) => {
   btn.classList.add('active');
 });
 
-// ---- Map layers ----
 let deviceMarker = null;
-let radiusCircle = null;
+const routeLine = L.polyline([], { color: '#3b82f6', weight: 4, opacity: 0.7 }).addTo(map);
 const trailLine = L.polyline([], { color: '#ef4444', weight: 4, opacity: 0.9 }).addTo(map);
-const routeLine = L.polyline([], { color: '#3b82f6', weight: 3, opacity: 0.6, dashArray: '6,8' }).addTo(map);
+const wpMarkers = L.layerGroup().addTo(map);
 
 function updateDevice(lat, lon, pan = false) {
   const ll = [lat, lon];
   if (!deviceMarker) {
     deviceMarker = L.circleMarker(ll, {
-      radius: 9, color: '#fff', weight: 2,
-      fillColor: '#ef4444', fillOpacity: 1,
+      radius: 9, color: '#fff', weight: 2, fillColor: '#ef4444', fillOpacity: 1,
     }).addTo(map);
-  } else {
-    deviceMarker.setLatLng(ll);
-  }
-  if (pan) map.setView(ll, Math.max(map.getZoom(), 15));
+  } else deviceMarker.setLatLng(ll);
+  if (pan) map.setView(ll, Math.max(map.getZoom(), 14));
 }
 
-function updateRadius(lat, lon, meters) {
-  if (radiusCircle) map.removeLayer(radiusCircle);
-  radiusCircle = L.circle([lat, lon], {
-    radius: meters,
-    color: '#10b981', weight: 2, fillColor: '#10b981',
-    fillOpacity: 0.06, dashArray: '4,6',
-  }).addTo(map);
-}
-
-// ---- Controls ----
+// Controls
 const $speed = document.getElementById('speed');
-const $radius = document.getElementById('radius');
+const $lapDist = document.getElementById('lapDist');
 const $speedVal = document.getElementById('speedVal');
-const $radiusVal = document.getElementById('radiusVal');
+const $lapDistVal = document.getElementById('lapDistVal');
+const $preview = document.getElementById('previewInfo');
+const $btnPreview = document.getElementById('btnPreview');
 const $btnStart = document.getElementById('btnStart');
 const $btnStop = document.getElementById('btnStop');
 const $status = document.getElementById('statusLine');
 const $deviceStatus = document.getElementById('deviceStatus');
-const $statDist = document.getElementById('statDist');
-const $statTime = document.getElementById('statTime');
-const $statLaps = document.getElementById('statLaps');
-const $loopPoints = document.getElementById('loopPoints');
-const $loopPointsVal = document.getElementById('loopPointsVal');
 
-let walkMode = 'random';  // 'random' | 'loop'
+let shape = 'square';
+let previewedRoute = null;  // cached OSRM route after preview
 
-document.getElementById('modeRandom').addEventListener('click', () => {
-  walkMode = 'random';
-  document.getElementById('modeRandom').classList.add('active');
-  document.getElementById('modeRandom').style.background = 'var(--accent)';
-  document.getElementById('modeRandom').style.color = 'white';
-  document.getElementById('modeLoop').classList.remove('active');
-  document.getElementById('modeLoop').style.background = 'transparent';
-  document.getElementById('modeLoop').style.color = 'var(--muted)';
-  document.getElementById('loopPointsRow').style.display = 'none';
-  $btnStart.textContent = '▶ 開始漫步';
-  document.getElementById('statLapsLabel').textContent = '路段';
-});
-document.getElementById('modeLoop').addEventListener('click', () => {
-  walkMode = 'loop';
-  document.getElementById('modeLoop').classList.add('active');
-  document.getElementById('modeLoop').style.background = 'var(--accent)';
-  document.getElementById('modeLoop').style.color = 'white';
-  document.getElementById('modeRandom').classList.remove('active');
-  document.getElementById('modeRandom').style.background = 'transparent';
-  document.getElementById('modeRandom').style.color = 'var(--muted)';
-  document.getElementById('loopPointsRow').style.display = 'flex';
-  $btnStart.textContent = '▶ 開始循環';
-  document.getElementById('statLapsLabel').textContent = '圈';
+document.querySelector('.shape-row').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-shape]');
+  if (!btn) return;
+  shape = btn.dataset.shape;
+  document.querySelectorAll('.shape-row button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  previewedRoute = null;
+  $btnStart.disabled = true;
+  $preview.textContent = '形狀已變更，按「預覽」重新規劃';
 });
 
-$loopPoints.addEventListener('input', () => { $loopPointsVal.textContent = `${$loopPoints.value} 個`; });
-$speed.addEventListener('input', () => { $speedVal.textContent = `${$speed.value} km/h`; });
-$radius.addEventListener('input', () => {
-  $radiusVal.textContent = `${$radius.value} m`;
-  if (deviceMarker) {
-    const ll = deviceMarker.getLatLng();
-    updateRadius(ll.lat, ll.lng, parseInt($radius.value));
-  }
+$speed.addEventListener('input', () => {
+  $speedVal.textContent = `${$speed.value} km/h`;
+  updateLapTime();
 });
+$lapDist.addEventListener('input', () => {
+  $lapDistVal.textContent = `${$lapDist.value} km`;
+  previewedRoute = null;
+  $btnStart.disabled = true;
+  $preview.textContent = '距離已變更，按「預覽」重新規劃';
+});
+
+function updateLapTime() {
+  if (!previewedRoute) return;
+  const km = previewedRoute.distance_km;
+  const mins = km / parseInt($speed.value) * 60;
+  $preview.replaceChildren();
+  addPreviewStat(km.toFixed(1) + ' km', '每圈距離');
+  addPreviewStat(Math.round(mins) + ' min', '每圈時間');
+  addPreviewStat(previewedRoute.points + ' pts', '路線點');
+}
+
+function addPreviewStat(num, label) {
+  const d = document.createElement('div');
+  const n = document.createElement('div'); n.className = 'pi-num'; n.textContent = num;
+  const l = document.createElement('div'); l.className = 'pi-label'; l.textContent = label;
+  d.append(n, l);
+  $preview.append(d);
+}
 
 function setStatus(text, cls = '') { $status.textContent = text; $status.className = cls; }
 
-// ---- Stats ----
-let totalDist = 0;
-let startTime = null;
-let legCount = 0;
-let statsTimer = null;
-
+// Stats
+let totalDist = 0, startTime = null, lapCount = 0, statsTimer = null;
 function resetStats() {
-  totalDist = 0; startTime = null; legCount = 0;
-  $statDist.textContent = '0.0'; $statTime.textContent = '0:00'; $statLaps.textContent = '0';
+  totalDist = 0; startTime = null; lapCount = 0;
+  document.getElementById('statDist').textContent = '0.0';
+  document.getElementById('statTime').textContent = '0:00';
+  document.getElementById('statLaps').textContent = '0';
   if (statsTimer) clearInterval(statsTimer);
 }
-
 function startStatsTimer() {
   startTime = Date.now();
   statsTimer = setInterval(() => {
     const s = Math.floor((Date.now() - startTime) / 1000);
-    const m = Math.floor(s / 60);
-    $statTime.textContent = `${m}:${String(s % 60).padStart(2, '0')}`;
+    document.getElementById('statTime').textContent =
+      `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
   }, 1000);
 }
 
-// ---- WebSocket ----
+// Preview
+$btnPreview.addEventListener('click', async () => {
+  if (!deviceMarker) { setStatus('先瞬移到某處', 'error'); return; }
+  const ll = deviceMarker.getLatLng();
+  $preview.textContent = 'OSRM 規劃中…';
+  $preview.className = 'preview-info loading';
+  $btnStart.disabled = true;
+
+  try {
+    const resp = await fetch('/api/preview-loop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat: ll.lat, lon: ll.lng,
+        shape: shape,
+        lap_distance_km: parseInt($lapDist.value),
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      $preview.textContent = data.error;
+      $preview.className = 'preview-info error';
+      return;
+    }
+    // Show route on map
+    routeLine.setLatLngs(data.route.map(p => [p[0], p[1]]));
+    wpMarkers.clearLayers();
+    data.waypoints.forEach((wp, i) => {
+      const m = L.circleMarker([wp[0], wp[1]], {
+        radius: 6, color: '#fff', weight: 2, fillColor: '#3b82f6', fillOpacity: 1,
+      }).addTo(wpMarkers);
+    });
+    map.fitBounds(routeLine.getBounds().pad(0.15));
+
+    previewedRoute = {
+      distance_km: data.distance_km,
+      points: data.route.length,
+      route: data.route,
+      waypoints: data.waypoints,
+    };
+    $preview.className = 'preview-info';
+    updateLapTime();
+    $btnStart.disabled = false;
+  } catch (err) {
+    $preview.textContent = `Error: ${err.message}`;
+    $preview.className = 'preview-info error';
+  }
+});
+
+// WebSocket
 let ws;
 function connectWS() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => {};
-  ws.onclose = () => { setStatus('WebSocket 斷線，3 秒後重連', 'error'); setTimeout(connectWS, 3000); };
-  ws.onerror = () => setStatus('WebSocket error', 'error');
+  ws.onclose = () => { setStatus('斷線，3s 重連', 'error'); setTimeout(connectWS, 3000); };
+  ws.onerror = () => setStatus('WS error', 'error');
   ws.onmessage = (ev) => handleMessage(JSON.parse(ev.data));
 }
 
@@ -362,115 +363,58 @@ function handleMessage(m) {
       if (m.device) {
         $deviceStatus.textContent = m.device.product;
         $deviceStatus.className = 'ok';
-      } else {
-        $deviceStatus.textContent = '未連線';
-        $deviceStatus.className = 'err';
       }
       if (m.last_position) {
         updateDevice(m.last_position.lat, m.last_position.lon, true);
-        updateRadius(m.last_position.lat, m.last_position.lon, parseInt($radius.value));
-        // Auto re-push to phone so the app has a GPS fix immediately
-        ws.send(JSON.stringify({
-          type: 'teleport',
-          lat: m.last_position.lat,
-          lon: m.last_position.lon,
-        }));
-        setStatus(`位置已同步 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
+        ws.send(JSON.stringify({ type: 'teleport', lat: m.last_position.lat, lon: m.last_position.lon }));
+        setStatus(`位置已同步 ${m.last_position.lat.toFixed(4)}, ${m.last_position.lon.toFixed(4)}`);
       } else {
-        setStatus('手機位置未知 — 先在主控台瞬移到某處');
+        setStatus('先在主控台瞬移到某處');
       }
       break;
-
-    case 'road_walk_started':
-      $btnStart.disabled = true;
-      $btnStop.disabled = false;
-      resetStats();
-      startStatsTimer();
-      trailLine.setLatLngs([]);
-      setStatus('漫步中…', 'running');
+    case 'teleported':
+      updateDevice(m.lat, m.lon);
       break;
-
     case 'loop_walk_started':
-      $btnStart.disabled = true;
-      $btnStop.disabled = false;
-      resetStats();
-      startStatsTimer();
+      $btnStart.disabled = true; $btnStop.disabled = false; $btnPreview.disabled = true;
+      document.getElementById('statsRow').style.display = 'grid';
+      resetStats(); startStatsTimer();
       trailLine.setLatLngs([]);
-      if (m.loop_route && m.loop_route.length > 0) {
-        routeLine.setLatLngs(m.loop_route.map(p => [p[0], p[1]]));
-        map.fitBounds(routeLine.getBounds().pad(0.1));
-      }
-      setStatus(`循環路線 ${(m.loop_distance_km || 0).toFixed(1)} km/圈`, 'running');
+      setStatus('循環中…', 'running');
       break;
-
     case 'loop_lap':
-      legCount++;
-      $statLaps.textContent = String(legCount);
+      lapCount++;
+      document.getElementById('statLaps').textContent = String(lapCount);
       break;
-
-    case 'road_walk_leg':
-      legCount++;
-      $statLaps.textContent = String(legCount);
-      if (m.route && m.route.length > 0) {
-        routeLine.setLatLngs(m.route.map(p => [p[0], p[1]]));
-      }
-      break;
-
-    case 'tick': {
+    case 'tick':
       updateDevice(m.lat, m.lon);
       trailLine.addLatLng([m.lat, m.lon]);
       totalDist += (m.step_m || 0);
-      $statDist.textContent = (totalDist / 1000).toFixed(2);
+      document.getElementById('statDist').textContent = (totalDist / 1000).toFixed(1);
       break;
-    }
-
-    case 'road_walk_done':
-    case 'done':
-      setStatus('漫步完成', 'done');
-      $btnStart.disabled = false;
-      $btnStop.disabled = true;
-      if (statsTimer) clearInterval(statsTimer);
-      break;
-
     case 'stopped':
-      setStatus('已停止');
-      $btnStart.disabled = false;
-      $btnStop.disabled = true;
+    case 'done':
+      setStatus(m.type === 'done' ? '完成' : '已停止');
+      $btnStart.disabled = false; $btnStop.disabled = true; $btnPreview.disabled = false;
       if (statsTimer) clearInterval(statsTimer);
       break;
-
     case 'error':
       setStatus(`Error: ${m.message}`, 'error');
-      $btnStart.disabled = false;
-      $btnStop.disabled = true;
+      $btnStart.disabled = false; $btnStop.disabled = true; $btnPreview.disabled = false;
       if (statsTimer) clearInterval(statsTimer);
-      break;
-
-    case 'teleported':
-      updateDevice(m.lat, m.lon, true);
-      updateRadius(m.lat, m.lon, parseInt($radius.value));
-      setStatus(`位置已更新 ${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}`);
       break;
   }
 }
 
 $btnStart.addEventListener('click', () => {
-  if (!deviceMarker) {
-    setStatus('手機位置未知 — 先在主控台瞬移', 'error');
-    return;
-  }
+  if (!previewedRoute || !deviceMarker) return;
   const ll = deviceMarker.getLatLng();
-  const msg = {
-    type: walkMode === 'loop' ? 'start_loop_walk' : 'start_road_walk',
-    lat: ll.lat,
-    lon: ll.lng,
-    radius_m: parseInt($radius.value),
+  ws.send(JSON.stringify({
+    type: 'start_loop_walk',
+    lat: ll.lat, lon: ll.lng,
     speed_kmh: parseInt($speed.value),
-  };
-  if (walkMode === 'loop') {
-    msg.num_points = parseInt($loopPoints.value);
-  }
-  ws.send(JSON.stringify(msg));
+    route: previewedRoute.route,
+  }));
 });
 
 $btnStop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
