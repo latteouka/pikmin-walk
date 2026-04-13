@@ -519,28 +519,12 @@ async def preview_loop(request):
             for i in range(n_corners)
         ]
 
-    # Step 2: Add intermediate waypoints along each edge (~300m apart).
-    # This forces OSRM to follow the intended path instead of taking
-    # shortcuts that backtrack.
-    INTERVAL_M = 300
-    waypoints = []
-    corners_closed = corners + [corners[0]]
-    for i in range(len(corners_closed) - 1):
-        a, b = corners_closed[i], corners_closed[i + 1]
-        edge_len = _hav(a, b)
-        n_segments = max(1, int(edge_len / INTERVAL_M))
-        for j in range(n_segments):
-            frac = j / n_segments
-            # Linear interpolation in lat/lon (fine for short edges < few km)
-            pt = (
-                a[0] + (b[0] - a[0]) * frac,
-                a[1] + (b[1] - a[1]) * frac,
-            )
-            waypoints.append(pt)
-    waypoints.append(waypoints[0])  # close the loop
+    # Use corners directly (no intermediate points — they cause zig-zag).
+    # Route via OSRM Trip API (TSP solver) which finds an optimal loop
+    # through the corners without backtracking.
+    waypoints = corners
 
-    # Query OSRM
-    route = await _osrm_loop_route(waypoints)
+    route = await _osrm_trip_route(waypoints)
     if route is None:
         return JSONResponse({"error": "OSRM 無法規劃路線，試試換位置或縮小距離"})
 
@@ -750,7 +734,8 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
 
 # --- OSRM Road Walk -----------------------------------------------------------
 
-OSRM_BASE = "https://router.project-osrm.org/route/v1/foot"
+OSRM_ROUTE = "https://router.project-osrm.org/route/v1/foot"
+OSRM_TRIP = "https://router.project-osrm.org/trip/v1/foot"
 
 
 async def _osrm_route(
@@ -758,7 +743,7 @@ async def _osrm_route(
 ) -> list[tuple[float, float]] | None:
     """Query OSRM for a walking route. Returns list of (lat, lon) or None."""
     url = (
-        f"{OSRM_BASE}/{start[1]},{start[0]};{end[1]},{end[0]}"
+        f"{OSRM_ROUTE}/{start[1]},{start[0]};{end[1]},{end[0]}"
         "?overview=full&geometries=geojson"
     )
     try:
@@ -877,12 +862,40 @@ async def _generate_loop_waypoints(
     return points
 
 
+async def _osrm_trip_route(
+    waypoints: list[tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    """Use OSRM Trip API (TSP solver) to find an optimal round-trip loop.
+
+    Unlike the Route API which forces strict waypoint order, the Trip API
+    reorders waypoints to minimize total distance and naturally avoids
+    backtracking. `roundtrip=true` + `source=first` ensures it starts
+    and ends at the first waypoint.
+    """
+    coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
+    url = (
+        f"{OSRM_TRIP}/{coords_str}"
+        "?roundtrip=true&source=first&geometries=geojson&overview=full"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("code") != "Ok" or not data.get("trips"):
+            return None
+        coords = data["trips"][0]["geometry"]["coordinates"]
+        return [(c[1], c[0]) for c in coords]
+    except Exception:
+        return None
+
+
 async def _osrm_loop_route(
     waypoints: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
     """Query OSRM for a walking route through all waypoints (loop)."""
     coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
-    url = f"{OSRM_BASE}/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
+    url = f"{OSRM_ROUTE}/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url)
