@@ -485,44 +485,59 @@ async def preview_loop(request):
     shape = body.get("shape", "square")
     target_km = float(body.get("lap_distance_km", 8))
 
-    # Estimate geometric radius from target road distance.
+    # Estimate geometric size from target road distance.
     # Roads are typically 1.3-1.8x longer than straight-line geometry.
-    # We start with a conservative estimate and OSRM will give actual distance.
     road_factor = 1.5
     center = (lat, lon)
-    from pikmin_walk import destination_point
+    from pikmin_walk import destination_point, haversine_m as _hav
 
+    # Step 1: Generate corner points of the shape
     if shape == "square":
-        # Square perimeter = 4 * side. side = target / 4 / road_factor
         side_m = (target_km * 1000) / 4 / road_factor
         half = side_m / 2
-        waypoints = [
+        corners = [
             destination_point(destination_point(center, 0, half), math.pi / 2, half),          # NE
             destination_point(destination_point(center, math.pi, half), math.pi / 2, half),     # SE
             destination_point(destination_point(center, math.pi, half), 3 * math.pi / 2, half), # SW
             destination_point(destination_point(center, 0, half), 3 * math.pi / 2, half),       # NW
         ]
     elif shape == "rect":
-        # Rectangle: long side 2x short side
-        short_m = (target_km * 1000) / 6 / road_factor  # perimeter = 2*(2s + s) = 6s
+        short_m = (target_km * 1000) / 6 / road_factor
         long_m = short_m * 2
-        waypoints = [
+        corners = [
             destination_point(destination_point(center, 0, long_m / 2), math.pi / 2, short_m / 2),
             destination_point(destination_point(center, math.pi, long_m / 2), math.pi / 2, short_m / 2),
             destination_point(destination_point(center, math.pi, long_m / 2), 3 * math.pi / 2, short_m / 2),
             destination_point(destination_point(center, 0, long_m / 2), 3 * math.pi / 2, short_m / 2),
         ]
     else:  # circle
-        n = 8
         geo_perimeter = (target_km * 1000) / road_factor
         radius_m = geo_perimeter / (2 * math.pi)
-        waypoints = []
-        for i in range(n):
-            angle = 2 * math.pi * i / n
-            waypoints.append(destination_point(center, angle, radius_m))
+        n_corners = max(8, int(geo_perimeter / 500))  # ~1 corner per 500m
+        corners = [
+            destination_point(center, 2 * math.pi * i / n_corners, radius_m)
+            for i in range(n_corners)
+        ]
 
-    # Close the loop
-    waypoints.append(waypoints[0])
+    # Step 2: Add intermediate waypoints along each edge (~300m apart).
+    # This forces OSRM to follow the intended path instead of taking
+    # shortcuts that backtrack.
+    INTERVAL_M = 300
+    waypoints = []
+    corners_closed = corners + [corners[0]]
+    for i in range(len(corners_closed) - 1):
+        a, b = corners_closed[i], corners_closed[i + 1]
+        edge_len = _hav(a, b)
+        n_segments = max(1, int(edge_len / INTERVAL_M))
+        for j in range(n_segments):
+            frac = j / n_segments
+            # Linear interpolation in lat/lon (fine for short edges < few km)
+            pt = (
+                a[0] + (b[0] - a[0]) * frac,
+                a[1] + (b[1] - a[1]) * frac,
+            )
+            waypoints.append(pt)
+    waypoints.append(waypoints[0])  # close the loop
 
     # Query OSRM
     route = await _osrm_loop_route(waypoints)
