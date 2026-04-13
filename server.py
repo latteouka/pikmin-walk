@@ -485,48 +485,62 @@ async def preview_loop(request):
     shape = body.get("shape", "square")
     target_km = float(body.get("lap_distance_km", 8))
 
-    # Estimate geometric size from target road distance.
-    # Roads are typically 1.3-1.8x longer than straight-line geometry.
     road_factor = 1.5
     center = (lat, lon)
+    rng = random.Random()
     from pikmin_walk import destination_point, haversine_m as _hav
 
-    # Step 1: Generate corner points of the shape
+    # Generate corner points with small random jitter (±15° angle, 80-120%
+    # radius). The jitter prevents corners from consistently landing in
+    # water bodies or forests — each preview attempt gets a slightly
+    # different shape, and OSRM snaps each corner to the nearest road.
+    def _jittered_corners(angles_radii):
+        """angles_radii: list of (base_angle, base_radius_m)"""
+        pts = []
+        for angle, radius in angles_radii:
+            a = angle + rng.gauss(0, math.radians(12))
+            r = radius * (0.85 + rng.random() * 0.3)
+            pts.append(destination_point(center, a, r))
+        return pts
+
     if shape == "square":
         side_m = (target_km * 1000) / 4 / road_factor
-        half = side_m / 2
-        corners = [
-            destination_point(destination_point(center, 0, half), math.pi / 2, half),          # NE
-            destination_point(destination_point(center, math.pi, half), math.pi / 2, half),     # SE
-            destination_point(destination_point(center, math.pi, half), 3 * math.pi / 2, half), # SW
-            destination_point(destination_point(center, 0, half), 3 * math.pi / 2, half),       # NW
+        diag = math.sqrt(2) * side_m / 2
+        base_angles_radii = [
+            (math.pi / 4, diag), (3 * math.pi / 4, diag),
+            (5 * math.pi / 4, diag), (7 * math.pi / 4, diag),
         ]
     elif shape == "rect":
         short_m = (target_km * 1000) / 6 / road_factor
         long_m = short_m * 2
-        corners = [
-            destination_point(destination_point(center, 0, long_m / 2), math.pi / 2, short_m / 2),
-            destination_point(destination_point(center, math.pi, long_m / 2), math.pi / 2, short_m / 2),
-            destination_point(destination_point(center, math.pi, long_m / 2), 3 * math.pi / 2, short_m / 2),
-            destination_point(destination_point(center, 0, long_m / 2), 3 * math.pi / 2, short_m / 2),
-        ]
+        d = math.sqrt((long_m / 2) ** 2 + (short_m / 2) ** 2)
+        a = math.atan2(short_m / 2, long_m / 2)
+        base_angles_radii = [(a, d), (math.pi - a, d), (math.pi + a, d), (2 * math.pi - a, d)]
     else:  # circle
         geo_perimeter = (target_km * 1000) / road_factor
         radius_m = geo_perimeter / (2 * math.pi)
-        n_corners = max(8, int(geo_perimeter / 500))  # ~1 corner per 500m
-        corners = [
-            destination_point(center, 2 * math.pi * i / n_corners, radius_m)
-            for i in range(n_corners)
-        ]
+        n = max(6, int(geo_perimeter / 600))
+        base_angles_radii = [(2 * math.pi * i / n, radius_m) for i in range(n)]
 
-    # Use corners directly (no intermediate points — they cause zig-zag).
-    # Route via OSRM Trip API (TSP solver) which finds an optimal loop
-    # through the corners without backtracking.
+    corners = _jittered_corners(base_angles_radii)
+
+    # Try Trip API first (TSP solver — works better in sparse road areas
+    # because it reorders waypoints). Fall back to Route API if needed.
+    # Retry up to 2 times with fresh jitter if both fail.
     waypoints = corners
+    route = None
+    for attempt in range(2):
+        route = await _osrm_trip_route(waypoints)
+        if route is not None:
+            break
+        route = await _osrm_loop_route(waypoints + [waypoints[0]])
+        if route is not None:
+            break
+        # Re-jitter corners for next attempt
+        corners = _jittered_corners(base_angles_radii)
 
-    route = await _osrm_trip_route(waypoints)
     if route is None:
-        return JSONResponse({"error": "OSRM 無法規劃路線，試試換位置或縮小距離"})
+        return JSONResponse({"error": "OSRM 無法規劃路線，試試縮小距離或換位置"})
 
     from pikmin_walk import haversine_m
     dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
