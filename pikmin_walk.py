@@ -156,13 +156,13 @@ PROFILES: dict[str, Profile] = {
     # Result: 816 unique cells vs 532 baseline (+53%), hot cells 126→9.
     "rwalk": Profile(
         label="隨機漫步（種花用）",
-        nominal_kmh=19.0,
+        nominal_kmh=14.0,
         tick_s=1.0,
         speed_jitter=0.12,
         position_jitter_m=1.0,
-        stop_probability_per_tick=0.005,
-        stop_duration_range=(10.0, 30.0),
-        max_radius_m=400.0,
+        stop_probability_per_tick=0.0,
+        stop_duration_range=(0.0, 0.0),
+        max_radius_m=1500.0,
         heading_jitter_deg=22.0,
         home_pull_gain=0.25,
         trail_repulsion_gain=0.15,

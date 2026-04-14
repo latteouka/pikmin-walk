@@ -748,30 +748,23 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
 
 # --- OSRM Road Walk -----------------------------------------------------------
 
-OSRM_ROUTE = "https://router.project-osrm.org/route/v1/foot"
-OSRM_TRIP = "https://router.project-osrm.org/trip/v1/foot"
+# Local OSRM (Docker, instant response, Ontario coverage)
+OSRM_LOCAL = "http://127.0.0.1:5050"
+# Public OSRM (fallback for regions not covered locally)
+OSRM_PUBLIC = "https://router.project-osrm.org"
 
 
 async def _osrm_route(
     start: tuple[float, float], end: tuple[float, float]
 ) -> list[tuple[float, float]] | None:
     """Query OSRM for a walking route. Returns list of (lat, lon) or None."""
-    url = (
-        f"{OSRM_ROUTE}/{start[1]},{start[0]};{end[1]},{end[0]}"
+    data = await _osrm_fetch(
+        f"/route/v1/foot/{start[1]},{start[0]};{end[1]},{end[0]}"
         "?overview=full&geometries=geojson"
     )
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        if data.get("code") != "Ok" or not data.get("routes"):
-            return None
-        coords = data["routes"][0]["geometry"]["coordinates"]
-        # GeoJSON is [lon, lat] — flip to (lat, lon)
-        return [(c[1], c[0]) for c in coords]
-    except Exception:
+    if data is None or data.get("code") != "Ok" or not data.get("routes"):
         return None
+    return [(c[1], c[0]) for c in data["routes"][0]["geometry"]["coordinates"]]
 
 
 def _random_point_in_radius(
@@ -876,51 +869,43 @@ async def _generate_loop_waypoints(
     return points
 
 
+async def _osrm_fetch(path: str) -> dict | None:
+    """Try local OSRM first, fall back to public. Returns parsed JSON or None."""
+    for base in [OSRM_LOCAL, OSRM_PUBLIC]:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base}{path}")
+                resp.raise_for_status()
+                return resp.json()
+        except Exception:
+            continue
+    return None
+
+
 async def _osrm_trip_route(
     waypoints: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
-    """Use OSRM Trip API (TSP solver) to find an optimal round-trip loop.
-
-    Unlike the Route API which forces strict waypoint order, the Trip API
-    reorders waypoints to minimize total distance and naturally avoids
-    backtracking. `roundtrip=true` + `source=first` ensures it starts
-    and ends at the first waypoint.
-    """
+    """OSRM Trip API (TSP solver) for optimal round-trip loops."""
     coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
-    url = (
-        f"{OSRM_TRIP}/{coords_str}"
-        "?roundtrip=true&source=first&geometries=geojson&overview=full"
+    data = await _osrm_fetch(
+        f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&geometries=geojson&overview=full"
     )
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        if data.get("code") != "Ok" or not data.get("trips"):
-            return None
-        coords = data["trips"][0]["geometry"]["coordinates"]
-        return [(c[1], c[0]) for c in coords]
-    except Exception:
+    if data is None or data.get("code") != "Ok" or not data.get("trips"):
         return None
+    return [(c[1], c[0]) for c in data["trips"][0]["geometry"]["coordinates"]]
 
 
 async def _osrm_loop_route(
     waypoints: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
-    """Query OSRM for a walking route through all waypoints (loop)."""
+    """OSRM Route API for ordered waypoint loop."""
     coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
-    url = f"{OSRM_ROUTE}/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        if data.get("code") != "Ok" or not data.get("routes"):
-            return None
-        coords = data["routes"][0]["geometry"]["coordinates"]
-        return [(c[1], c[0]) for c in coords]
-    except Exception:
+    data = await _osrm_fetch(
+        f"/route/v1/foot/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
+    )
+    if data is None or data.get("code") != "Ok" or not data.get("routes"):
         return None
+    return [(c[1], c[0]) for c in data["routes"][0]["geometry"]["coordinates"]]
 
 
 async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
