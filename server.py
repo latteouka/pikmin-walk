@@ -524,10 +524,10 @@ async def preview_loop(request):
 
     corners = _jittered_corners(base_angles_radii)
 
-    # Try Trip API first (TSP solver — works better in sparse road areas
-    # because it reorders waypoints). Fall back to Route API if needed.
-    # Retry up to 2 times with fresh jitter if both fail.
-    waypoints = corners
+    # Always include the user's current position as the first waypoint
+    # so the route starts and ends at where they actually are.
+    # Trip API with source=first ensures it departs from waypoints[0].
+    waypoints = [center] + corners
     route = None
     for attempt in range(2):
         route = await _osrm_trip_route(waypoints)
@@ -536,8 +536,8 @@ async def preview_loop(request):
         route = await _osrm_loop_route(waypoints + [waypoints[0]])
         if route is not None:
             break
-        # Re-jitter corners for next attempt
         corners = _jittered_corners(base_angles_radii)
+        waypoints = [center] + corners
 
     if route is None:
         return JSONResponse({"error": "OSRM 無法規劃路線，試試縮小距離或換位置"})
@@ -748,9 +748,13 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
 
 # --- OSRM Road Walk -----------------------------------------------------------
 
-# Local OSRM (Docker, instant response, Ontario coverage)
-OSRM_LOCAL = "http://127.0.0.1:5050"
-# Public OSRM (fallback for regions not covered locally)
+# Local OSRM instances (Docker, instant response)
+# Each covers one region; _osrm_fetch tries all of them.
+OSRM_LOCAL_INSTANCES = [
+    "http://127.0.0.1:5050",   # Ontario
+    "http://127.0.0.1:5051",   # Taiwan
+]
+# Public OSRM (last resort fallback)
 OSRM_PUBLIC = "https://router.project-osrm.org"
 
 
@@ -762,7 +766,7 @@ async def _osrm_route(
         f"/route/v1/foot/{start[1]},{start[0]};{end[1]},{end[0]}"
         "?overview=full&geometries=geojson"
     )
-    if data is None or data.get("code") != "Ok" or not data.get("routes"):
+    if data is None or not data.get("routes"):
         return None
     return [(c[1], c[0]) for c in data["routes"][0]["geometry"]["coordinates"]]
 
@@ -870,13 +874,32 @@ async def _generate_loop_waypoints(
 
 
 async def _osrm_fetch(path: str) -> dict | None:
-    """Try local OSRM first, fall back to public. Returns parsed JSON or None."""
-    for base in [OSRM_LOCAL, OSRM_PUBLIC]:
+    """Try all local OSRM instances first, then public. Returns parsed JSON or None.
+
+    Each local instance covers a different region. An instance that doesn't
+    cover the requested coordinates may still return code:"Ok" but with
+    distance=0 (all points snapped to the same phantom node). We check
+    for meaningful distance before accepting a result.
+    """
+    all_servers = OSRM_LOCAL_INSTANCES + [OSRM_PUBLIC]
+    for base in all_servers:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f"{base}{path}")
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                if data.get("code") != "Ok":
+                    continue
+                # Check for meaningful distance — an out-of-coverage instance
+                # returns Ok but distance=0 (all coords snap to one point).
+                dist = 0.0
+                if data.get("routes"):
+                    dist = data["routes"][0].get("distance", 0)
+                elif data.get("trips"):
+                    dist = data["trips"][0].get("distance", 0)
+                if dist < 10:  # less than 10m = not a real route
+                    continue
+                return data
         except Exception:
             continue
     return None
@@ -890,7 +913,7 @@ async def _osrm_trip_route(
     data = await _osrm_fetch(
         f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&geometries=geojson&overview=full"
     )
-    if data is None or data.get("code") != "Ok" or not data.get("trips"):
+    if data is None or not data.get("trips"):
         return None
     return [(c[1], c[0]) for c in data["trips"][0]["geometry"]["coordinates"]]
 
@@ -903,7 +926,7 @@ async def _osrm_loop_route(
     data = await _osrm_fetch(
         f"/route/v1/foot/{coords_str}?overview=full&geometries=geojson&continue_straight=true"
     )
-    if data is None or data.get("code") != "Ok" or not data.get("routes"):
+    if data is None or not data.get("routes"):
         return None
     return [(c[1], c[0]) for c in data["routes"][0]["geometry"]["coordinates"]]
 
