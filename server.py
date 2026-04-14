@@ -58,28 +58,65 @@ HERE = Path(__file__).parent
 STATIC_DIR = HERE / "static"
 
 # Runtime config — set by __main__ block before app starts.
-# When TARGET_UDID is set, session connects to that specific device.
-# STATE_FILE path depends on UDID so iPad and iPhone don't share bookmarks.
+# Per-device state (last_position, last_wifi_host): state-<udid>.json
+# Shared state (bookmarks, google_maps_api_key): shared.json
 TARGET_UDID: str | None = None
 STATE_FILE: Path = HERE / "state.json"
+SHARED_FILE: Path = HERE / "shared.json"
 
 
-def _read_state() -> dict:
-    """Read the on-disk state blob, or {} if missing/corrupt."""
-    if not STATE_FILE.exists():
+def _read_json(path: Path) -> dict:
+    if not path.exists():
         return {}
     try:
-        return json.loads(STATE_FILE.read_text())
+        return json.loads(path.read_text())
     except (json.JSONDecodeError, ValueError):
         return {}
 
 
+def _write_json(path: Path, data: dict) -> None:
+    data["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.replace(path)
+
+
+def _read_state() -> dict:
+    return _read_json(STATE_FILE)
+
+
 def _write_state(state: dict) -> None:
-    """Atomically write the state blob to disk."""
-    state["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    tmp = STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    tmp.replace(STATE_FILE)
+    _write_json(STATE_FILE, state)
+
+
+def _read_shared() -> dict:
+    return _read_json(SHARED_FILE)
+
+
+def _write_shared(data: dict) -> None:
+    _write_json(SHARED_FILE, data)
+
+
+def _migrate_to_shared() -> None:
+    """One-time: pull bookmarks + api_key from any state*.json into shared.json."""
+    if SHARED_FILE.exists():
+        return
+    shared = {}
+    # Prefer original state.json if it has the data
+    for candidate in [HERE / "state.json", *HERE.glob("state-*.json")]:
+        d = _read_json(candidate)
+        if not shared.get("bookmarks") and d.get("bookmarks"):
+            shared["bookmarks"] = d["bookmarks"]
+        if not shared.get("google_maps_api_key") and d.get("google_maps_api_key"):
+            shared["google_maps_api_key"] = d["google_maps_api_key"]
+        if shared.get("bookmarks") and shared.get("google_maps_api_key"):
+            break
+    if shared:
+        _write_shared(shared)
+        print(f"✓ migrated {len(shared.get('bookmarks', []))} bookmarks to shared.json")
+
+
+_migrate_to_shared()
 
 
 def _load_position() -> "tuple[float, float] | None":
@@ -431,24 +468,23 @@ async def walk_page(request):
 
 
 async def config_get(request):
-    state = _read_state()
+    shared = _read_shared()
     return JSONResponse({
-        "google_maps_api_key": state.get("google_maps_api_key", ""),
+        "google_maps_api_key": shared.get("google_maps_api_key", ""),
     })
 
 
 async def config_post(request):
     body = await request.json()
-    state = _read_state()
+    shared = _read_shared()
     if "google_maps_api_key" in body:
-        state["google_maps_api_key"] = str(body["google_maps_api_key"]).strip()
-    _write_state(state)
+        shared["google_maps_api_key"] = str(body["google_maps_api_key"]).strip()
+    _write_shared(shared)
     return JSONResponse({"ok": True})
 
 
 async def bookmarks_get(request):
-    state = _read_state()
-    return JSONResponse(state.get("bookmarks", []))
+    return JSONResponse(_read_shared().get("bookmarks", []))
 
 
 async def bookmarks_post(request):
@@ -461,18 +497,18 @@ async def bookmarks_post(request):
         return JSONResponse({"error": "need name, lat, lon"}, status_code=400)
     if not name:
         name = f"{lat:.4f}, {lon:.4f}"
-    state = _read_state()
-    bk = state.setdefault("bookmarks", [])
+    shared = _read_shared()
+    bk = shared.setdefault("bookmarks", [])
     bk.append({"name": name, "lat": lat, "lon": lon})
-    _write_state(state)
+    _write_shared(shared)
     return JSONResponse(bk)
 
 
 async def bookmarks_patch(request):
     idx = int(request.path_params["idx"])
     body = await request.json()
-    state = _read_state()
-    bk = state.get("bookmarks", [])
+    shared = _read_shared()
+    bk = shared.get("bookmarks", [])
     if 0 <= idx < len(bk):
         if "name" in body:
             bk[idx]["name"] = str(body["name"]).strip()
@@ -480,17 +516,17 @@ async def bookmarks_patch(request):
             bk[idx]["lat"] = float(body["lat"])
         if "lon" in body:
             bk[idx]["lon"] = float(body["lon"])
-        _write_state(state)
+        _write_shared(shared)
     return JSONResponse(bk)
 
 
 async def bookmarks_delete(request):
     idx = int(request.path_params["idx"])
-    state = _read_state()
-    bk = state.get("bookmarks", [])
+    shared = _read_shared()
+    bk = shared.get("bookmarks", [])
     if 0 <= idx < len(bk):
         bk.pop(idx)
-        _write_state(state)
+        _write_shared(shared)
     return JSONResponse(bk)
 
 
@@ -576,6 +612,8 @@ async def preview_loop(request):
 
 
 async def profiles_endpoint(request):
+    # Only expose random-walk profiles — route-based profiles were removed
+    # from the UI. `rwalk` is the only one in this category.
     return JSONResponse(
         {
             name: {
@@ -589,6 +627,7 @@ async def profiles_endpoint(request):
                 "is_random_walk": p.max_radius_m > 0,
             }
             for name, p in PROFILES.items()
+            if p.max_radius_m > 0
         }
     )
 
@@ -741,9 +780,11 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
             elapsed = 0.0
             if is_rwalk:
                 session.live_radius_m = profile.max_radius_m
+                session.live_speed_kmh = profile.nominal_kmh
                 ticks_iter = random_walk(
                     center, profile, rng,
                     get_radius=lambda: session.live_radius_m,
+                    get_speed_kmh=lambda: session.live_speed_kmh,
                 )
             else:
                 ticks_iter = simulate(waypoints, profile, rng)

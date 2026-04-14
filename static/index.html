@@ -346,16 +346,22 @@
       <ul id="bookmarks"></ul>
     </div>
 
-    <div class="section">
-      <h2>移動模式</h2>
-      <select id="profile"></select>
-    </div>
+    <select id="profile" style="display:none;"></select>
 
-    <div class="section" id="radiusSection" style="display:none;">
+    <div class="section">
       <h2>漫步半徑</h2>
       <div style="display:flex;align-items:center;gap:10px;">
         <input type="range" id="radiusSlider" min="100" max="5000" value="1000" step="50" style="flex:1;accent-color:var(--accent);">
         <span id="radiusVal" style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;min-width:60px;">1000 m</span>
+      </div>
+      <div class="hint">移動中可即時調整</div>
+    </div>
+
+    <div class="section">
+      <h2>速度</h2>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="range" id="speedSlider" min="3" max="25" value="14" step="1" style="flex:1;accent-color:var(--accent);">
+        <span id="speedVal" style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;min-width:60px;">14 km/h</span>
       </div>
       <div class="hint">移動中可即時調整</div>
     </div>
@@ -817,24 +823,23 @@ fetch('/api/profiles')
   })
   .catch(() => setStatus('無法載入 profiles', 'error'));
 
-const $radiusSection = document.getElementById('radiusSection');
 const $radiusSlider = document.getElementById('radiusSlider');
 const $radiusVal = document.getElementById('radiusVal');
+const $speedSlider = document.getElementById('speedSlider');
+const $speedVal = document.getElementById('speedVal');
 
 function refreshProfileUI() {
   const meta = currentProfileMeta();
-  if (meta.is_random_walk) {
-    $start.textContent = '🌸 開始漫步種花';
-    $radiusSection.style.display = '';
-    // Sync slider to profile's default radius on first view
-    if (meta.max_radius_m && !$radiusSlider.dataset.initialized) {
-      $radiusSlider.value = meta.max_radius_m;
-      $radiusVal.textContent = `${meta.max_radius_m} m`;
-      $radiusSlider.dataset.initialized = '1';
-    }
-  } else {
-    $start.textContent = '▶ 開始移動';
-    $radiusSection.style.display = 'none';
+  $start.textContent = '🌸 開始漫步種花';
+  if (meta.max_radius_m && !$radiusSlider.dataset.initialized) {
+    $radiusSlider.value = meta.max_radius_m;
+    $radiusVal.textContent = `${meta.max_radius_m} m`;
+    $radiusSlider.dataset.initialized = '1';
+  }
+  if (meta.nominal_kmh && !$speedSlider.dataset.initialized) {
+    $speedSlider.value = meta.nominal_kmh;
+    $speedVal.textContent = `${meta.nominal_kmh} km/h`;
+    $speedSlider.dataset.initialized = '1';
   }
   updateRwalkCircle();
 }
@@ -846,6 +851,13 @@ $radiusSlider.addEventListener('input', () => {
   updateRwalkCircle();
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'set_radius', radius_m: parseInt($radiusSlider.value) }));
+  }
+});
+
+$speedSlider.addEventListener('input', () => {
+  $speedVal.textContent = `${$speedSlider.value} km/h`;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'set_speed', speed_kmh: parseInt($speedSlider.value) }));
   }
 });
 

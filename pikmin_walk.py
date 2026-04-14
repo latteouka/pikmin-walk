@@ -350,6 +350,7 @@ def random_walk(
     profile: Profile,
     rng: random.Random,
     get_radius: "callable | None" = None,
+    get_speed_kmh: "callable | None" = None,
 ) -> Iterator[Tick]:
     """Correlated random walk with a soft home tether. Yields Ticks forever.
 
@@ -413,9 +414,13 @@ def random_walk(
 
         heading = _wrap_angle(heading)
 
-        # 4. Jittered step length
+        # 4. Jittered step length (read speed dynamically each tick)
         jitter = rng.gauss(0.0, profile.speed_jitter)
-        step_m = max(0.5, profile.nominal_step_m * (1.0 + jitter))
+        if get_speed_kmh:
+            step_base = get_speed_kmh() * 1000.0 / 3600.0 * profile.tick_s
+        else:
+            step_base = profile.nominal_step_m
+        step_m = max(0.5, step_base * (1.0 + jitter))
         current = destination_point(current, heading, step_m)
         trail.append(current)
 
