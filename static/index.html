@@ -458,8 +458,18 @@ function resetTrail() {
   trailLine.setLatLngs([]);
 }
 
-// Map click: fill jump input with coords (teleport via GO button)
+// Map click: drop blue marker + fill jump input (teleport via GO button)
+let clickMarker = null;
 map.on('click', (e) => {
+  const ll = [e.latlng.lat, e.latlng.lng];
+  if (clickMarker) {
+    clickMarker.setLatLng(ll);
+  } else {
+    clickMarker = L.circleMarker(ll, {
+      radius: 8, color: '#fff', weight: 2,
+      fillColor: '#3b82f6', fillOpacity: 1,
+    }).addTo(map);
+  }
   document.getElementById('jumpInput').value =
     `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
 });

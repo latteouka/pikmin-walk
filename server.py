@@ -56,7 +56,12 @@ from pikmin_walk import PROFILES, haversine_m, random_walk, simulate
 
 HERE = Path(__file__).parent
 STATIC_DIR = HERE / "static"
-STATE_FILE = HERE / "state.json"
+
+# Runtime config — set by __main__ block before app starts.
+# When TARGET_UDID is set, session connects to that specific device.
+# STATE_FILE path depends on UDID so iPad and iPhone don't share bookmarks.
+TARGET_UDID: str | None = None
+STATE_FILE: Path = HERE / "state.json"
 
 
 def _read_state() -> dict:
@@ -152,12 +157,18 @@ async def _try_wifi(stack: AsyncExitStack):
     records = _load_pair_records()
     if not records:
         return None
-    # Pick the first record with WiFiMACAddress — typically only one phone
+    # Pick the pair record matching TARGET_UDID, or first one with WiFiMAC
     record = None
-    for _, rec in records:
-        if "WiFiMACAddress" in rec:
-            record = rec
-            break
+    if TARGET_UDID:
+        for udid, rec in records:
+            if udid == TARGET_UDID and "WiFiMACAddress" in rec:
+                record = rec
+                break
+    else:
+        for _, rec in records:
+            if "WiFiMACAddress" in rec:
+                record = rec
+                break
     if record is None:
         return None
 
@@ -177,14 +188,12 @@ async def _try_wifi(stack: AsyncExitStack):
         _save_wifi_host(host)
         return ld
 
-    # 1. Fast path: try cached host first
     cached = _load_wifi_host()
     if cached:
         ld = await _try_host(cached, "cached")
         if ld is not None:
             return ld
 
-    # 2. Bonjour browse — extract real-LAN addresses
     try:
         answers = await browse_mobdev2(timeout=6)
     except Exception:
@@ -211,6 +220,8 @@ async def _try_mobdev2_linklocal(stack: AsyncExitStack):
     records = _load_pair_records()
     if not records:
         return None
+    if TARGET_UDID:
+        records = [(u, r) for u, r in records if u == TARGET_UDID]
     by_mac = {rec["WiFiMACAddress"]: (udid, rec) for udid, rec in records
               if "WiFiMACAddress" in rec}
     if not by_mac:
@@ -330,15 +341,23 @@ class DeviceSession:
             pass
 
         if rsds:
-            rsd = rsds[0]
-            for extra in rsds[1:]:
-                await extra.close()
-            dvt = await self._stack.enter_async_context(DvtProvider(rsd))
-            self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
-            self.udid = rsd.udid
-            self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
-            self.path = "dvt"
-            return
+            # Filter by TARGET_UDID if set (multi-device mode)
+            if TARGET_UDID:
+                matching = [r for r in rsds if r.udid == TARGET_UDID]
+                others = [r for r in rsds if r.udid != TARGET_UDID]
+                for o in others:
+                    await o.close()
+                rsds = matching
+            if rsds:
+                rsd = rsds[0]
+                for extra in rsds[1:]:
+                    await extra.close()
+                dvt = await self._stack.enter_async_context(DvtProvider(rsd))
+                self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
+                self.udid = rsd.udid
+                self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
+                self.path = "dvt"
+                return
 
         # Legacy path (iOS ≤16). Three transports to try, in priority
         # order — we want to end up on a Wi-Fi lockdown session so that
@@ -364,7 +383,7 @@ class DeviceSession:
             if lockdown is not None:
                 self.path = "legacy-mobdev2"
             else:
-                lockdown = await create_using_usbmux()
+                lockdown = await create_using_usbmux(serial=TARGET_UDID) if TARGET_UDID else await create_using_usbmux()
                 self._stack.push_async_callback(lockdown.close)
                 self.path = "legacy-usb"
                 # Opportunistically persist a pair record so the next
@@ -1093,5 +1112,18 @@ app = Starlette(
 
 
 if __name__ == "__main__":
-    print("Pikmin Walker UI  →  http://localhost:7766")
-    uvicorn.run(app, host="127.0.0.1", port=7766, log_level="warning")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=7766, help="HTTP port")
+    parser.add_argument("--udid", type=str, default=None, help="Device UDID (pins session to one device)")
+    args = parser.parse_args()
+
+    TARGET_UDID = args.udid
+    if TARGET_UDID:
+        # Separate state file per device so bookmarks/last_position don't collide
+        STATE_FILE = HERE / f"state-{TARGET_UDID[:12]}.json"
+        print(f"Target device: {TARGET_UDID}")
+        print(f"State file: {STATE_FILE.name}")
+
+    print(f"Pikmin Walker UI  →  http://localhost:{args.port}")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
