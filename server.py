@@ -524,10 +524,11 @@ async def preview_loop(request):
 
     corners = _jittered_corners(base_angles_radii)
 
-    # Always include the user's current position as the first waypoint
-    # so the route starts and ends at where they actually are.
-    # Trip API with source=first ensures it departs from waypoints[0].
-    waypoints = [center] + corners
+    # Let OSRM freely optimize the loop — don't force user's position
+    # as a waypoint. This gives OSRM full freedom to find the shortest
+    # non-overlapping circuit. The walker will be teleported to the
+    # route's start point before walking begins.
+    waypoints = corners
     route = None
     for attempt in range(2):
         route = await _osrm_trip_route(waypoints)
@@ -537,7 +538,7 @@ async def preview_loop(request):
         if route is not None:
             break
         corners = _jittered_corners(base_angles_radii)
-        waypoints = [center] + corners
+        waypoints = corners
 
     if route is None:
         return JSONResponse({"error": "OSRM 無法規劃路線，試試縮小距離或換位置"})
@@ -911,7 +912,7 @@ async def _osrm_trip_route(
     """OSRM Trip API (TSP solver) for optimal round-trip loops."""
     coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
     data = await _osrm_fetch(
-        f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&geometries=geojson&overview=full"
+        f"/trip/v1/foot/{coords_str}?roundtrip=true&geometries=geojson&overview=full"
     )
     if data is None or not data.get("trips"):
         return None
@@ -956,6 +957,10 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
         try:
             loop_dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
+
+            # Teleport to route start before walking
+            await session.set_location(*route[0])
+
             await ws.send_json({
                 "type": "loop_walk_started",
                 "loop_route": [[p[0], p[1]] for p in route],
