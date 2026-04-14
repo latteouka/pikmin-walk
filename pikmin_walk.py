@@ -162,7 +162,7 @@ PROFILES: dict[str, Profile] = {
         position_jitter_m=1.0,
         stop_probability_per_tick=0.0,
         stop_duration_range=(0.0, 0.0),
-        max_radius_m=1500.0,
+        max_radius_m=1000.0,
         heading_jitter_deg=22.0,
         home_pull_gain=0.25,
         trail_repulsion_gain=0.15,
@@ -346,7 +346,10 @@ def _trail_repulsion_heading(
 
 
 def random_walk(
-    center: Waypoint, profile: Profile, rng: random.Random
+    center: Waypoint,
+    profile: Profile,
+    rng: random.Random,
+    get_radius: "callable | None" = None,
 ) -> Iterator[Tick]:
     """Correlated random walk with a soft home tether. Yields Ticks forever.
 
@@ -398,10 +401,12 @@ def random_walk(
         )
 
         # 3. Soft home tether — the further out, the harder the pull
+        #    Read radius dynamically each tick so UI slider can retune live.
+        radius = get_radius() if get_radius else profile.max_radius_m
         dist_home = haversine_m(current, center)
-        if dist_home > profile.max_radius_m:
+        if dist_home > radius:
             bearing_home = initial_bearing_rad(current, center)
-            over = (dist_home - profile.max_radius_m) / profile.max_radius_m
+            over = (dist_home - radius) / radius
             pull = min(1.0, over) * profile.home_pull_gain
             delta = _wrap_angle(bearing_home - heading)
             heading += delta * pull

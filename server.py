@@ -297,6 +297,8 @@ class DeviceSession:
         self.running_task: asyncio.Task | None = None
         # Live speed — can be changed mid-run via WS "set_speed" message.
         self.live_speed_kmh: float = 19.0
+        # Live radius — rwalk reads this each tick instead of profile.max_radius_m
+        self.live_radius_m: float = 1000.0
         # Pause flag — runners check each tick and sleep until unpaused.
         self.paused: bool = False
         # Last coordinate we successfully pushed to the phone. The iOS
@@ -622,6 +624,11 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     session.live_speed_kmh = max(1.0, min(50.0, float(msg.get("speed_kmh", 19))))
                 except (TypeError, ValueError):
                     pass
+            elif action == "set_radius":
+                try:
+                    session.live_radius_m = max(50.0, min(10000.0, float(msg.get("radius_m", 1000))))
+                except (TypeError, ValueError):
+                    pass
             elif action == "clear":
                 if session.loc_sim is not None:
                     try:
@@ -713,10 +720,14 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
                 }
             )
             elapsed = 0.0
-            ticks_iter = (
-                random_walk(center, profile, rng) if is_rwalk
-                else simulate(waypoints, profile, rng)
-            )
+            if is_rwalk:
+                session.live_radius_m = profile.max_radius_m
+                ticks_iter = random_walk(
+                    center, profile, rng,
+                    get_radius=lambda: session.live_radius_m,
+                )
+            else:
+                ticks_iter = simulate(waypoints, profile, rng)
             for tick in ticks_iter:
                 await session.set_location(*tick.position)
                 await ws.send_json(

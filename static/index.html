@@ -347,31 +347,25 @@
     </div>
 
     <div class="section">
-      <h2>地圖點擊</h2>
-      <div class="mode-toggle">
-        <button id="mode-route" class="active">📍 加路線點</button>
-        <button id="mode-jump">🎯 點哪瞬移哪</button>
-      </div>
-    </div>
-
-    <div class="section">
       <h2>移動模式</h2>
       <select id="profile"></select>
     </div>
 
-    <div class="section">
-      <h2>路線點</h2>
-      <ol id="waypoints"></ol>
-      <div class="hint">點地圖加目的地（起點 = 手機目前位置），拖曳移動、右鍵 / ✕ 刪除</div>
+    <div class="section" id="radiusSection" style="display:none;">
+      <h2>漫步半徑</h2>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="range" id="radiusSlider" min="100" max="5000" value="1000" step="50" style="flex:1;accent-color:var(--accent);">
+        <span id="radiusVal" style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;min-width:60px;">1000 m</span>
+      </div>
+      <div class="hint">移動中可即時調整</div>
     </div>
 
     <div class="section">
       <div class="btn-row">
-        <button id="start" class="primary">▶ 開始移動</button>
+        <button id="start" class="primary">▶ 開始</button>
         <button id="stop" class="danger" disabled>■ 停止</button>
       </div>
       <div class="btn-row">
-        <button id="clearRoute">清除路線</button>
         <button id="clearLoc">回到真實 GPS</button>
       </div>
     </div>
@@ -431,19 +425,14 @@ document.getElementById('layerControl').addEventListener('click', (e) => {
 //
 // ---- State ----
 //
-const waypoints = [];  // each: {lat, lon, marker}
-const wpLayer = L.layerGroup().addTo(map);
-const routeLine = L.polyline([], {
-  color: '#3b82f6', weight: 4, opacity: 0.7, dashArray: '8,8',
-}).addTo(map);
 const trailLine = L.polyline([], {
   color: '#ef4444', weight: 4, opacity: 0.9,
 }).addTo(map);
 let deviceMarker = null;
 
-// Random-walk visual aid: a translucent circle showing the home tether.
+// Random-walk visual aid: translucent circle showing home tether
 let rwalkCircle = null;
-let profilesMeta = {};  // loaded from /api/profiles
+let profilesMeta = {};
 
 function currentProfileMeta() {
   return profilesMeta[document.getElementById('profile').value] || {};
@@ -451,148 +440,28 @@ function currentProfileMeta() {
 
 function updateRwalkCircle() {
   const meta = currentProfileMeta();
-  // Remove previous
+  const radiusInput = document.getElementById('radiusSlider');
+  const radius = radiusInput ? parseInt(radiusInput.value) : (meta.max_radius_m || 1000);
   if (rwalkCircle) { map.removeLayer(rwalkCircle); rwalkCircle = null; }
   if (!meta.is_random_walk) return;
-  // Anchor = first waypoint, or current device position
-  const anchor = waypoints.length > 0
-    ? [waypoints[0].lat, waypoints[0].lon]
-    : (deviceMarker ? deviceMarker.getLatLng() : null);
+  const anchor = deviceMarker ? deviceMarker.getLatLng() : null;
   if (!anchor) return;
   rwalkCircle = L.circle(anchor, {
-    radius: meta.max_radius_m,
-    color: '#10b981',
-    weight: 2,
-    fillColor: '#10b981',
-    fillOpacity: 0.08,
+    radius: radius,
+    color: '#10b981', weight: 2,
+    fillColor: '#10b981', fillOpacity: 0.08,
     dashArray: '4,6',
   }).addTo(map);
 }
 
-//
-// ---- Waypoint markers ----
-//
-// Leaflet needs divIcon({html: ...}) so we build a DOM node ourselves
-// and stringify it — this way the `idx` value never goes through a
-// string template with user input.
-function makeLabelIcon(idx) {
-  const div = document.createElement('div');
-  div.className = 'wp-marker';
-  div.textContent = String(idx + 1);
-  return L.divIcon({
-    className: '',
-    html: div.outerHTML,  // idx is a number; outerHTML of the node we just built is safe
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-  });
-}
-
-function addWaypoint(lat, lon) {
-  const marker = L.marker([lat, lon], {
-    draggable: true,
-    icon: makeLabelIcon(waypoints.length),
-  }).addTo(wpLayer);
-  const wp = { lat, lon, marker };
-  marker.on('drag', () => {
-    const pos = marker.getLatLng();
-    wp.lat = pos.lat;
-    wp.lon = pos.lng;
-    redraw();
-  });
-  marker.on('contextmenu', (e) => {
-    e.originalEvent.preventDefault();
-    const i = waypoints.indexOf(wp);
-    if (i >= 0) removeWaypointAt(i);
-  });
-  waypoints.push(wp);
-  redraw();
-}
-
-function removeWaypointAt(idx) {
-  wpLayer.removeLayer(waypoints[idx].marker);
-  waypoints.splice(idx, 1);
-  // Re-number remaining markers
-  waypoints.forEach((w, i) => w.marker.setIcon(makeLabelIcon(i)));
-  redraw();
-}
-
-function redraw() {
-  routeLine.setLatLngs(waypoints.map(w => [w.lat, w.lon]));
-  renderWaypointList();
-  updateRwalkCircle();
-}
-
-//
-// ---- Waypoint list in sidebar ----
-//
-// Built with createElement / textContent, no innerHTML — everything that
-// could contain data gets set via .textContent so there's no HTML parse.
-//
-function renderWaypointList() {
-  const ol = document.getElementById('waypoints');
-  ol.replaceChildren();
-  waypoints.forEach((w, i) => {
-    const li = document.createElement('li');
-
-    const num = document.createElement('span');
-    num.className = 'num';
-    num.textContent = String(i + 1);
-
-    const coords = document.createElement('span');
-    coords.className = 'coords';
-    coords.textContent = `${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`;
-
-    const rm = document.createElement('button');
-    rm.textContent = '✕';
-    rm.title = '刪除';
-    rm.addEventListener('click', () => removeWaypointAt(i));
-
-    li.append(num, coords, rm);
-    ol.append(li);
-  });
-}
-
-function clearRoute() {
-  wpLayer.clearLayers();
-  waypoints.length = 0;
-  redraw();
-  resetTrail();
-}
-
 function resetTrail() {
   trailLine.setLatLngs([]);
-  if (deviceMarker) {
-    map.removeLayer(deviceMarker);
-    deviceMarker = null;
-  }
 }
 
-//
-// ---- Click mode: "route" (add waypoint) or "jump" (teleport device) ----
-//
-let clickMode = 'route';  // 'route' | 'jump'
-
-function setClickMode(mode) {
-  clickMode = mode;
-  document.getElementById('mode-route').classList.toggle('active', mode === 'route');
-  document.getElementById('mode-jump').classList.toggle('active', mode === 'jump');
-  // visual feedback on the map cursor
-  document.getElementById('map').style.cursor = mode === 'jump' ? 'crosshair' : '';
-}
-
-document.getElementById('mode-route').addEventListener('click', () => setClickMode('route'));
-document.getElementById('mode-jump').addEventListener('click', () => setClickMode('jump'));
-
+// Map click: fill jump input with coords (teleport via GO button)
 map.on('click', (e) => {
-  // Always fill the jump input with the clicked coordinates
   document.getElementById('jumpInput').value =
     `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
-
-  if (clickMode === 'jump') {
-    teleportTo(e.latlng.lat, e.latlng.lng);
-  } else {
-    addWaypoint(e.latlng.lat, e.latlng.lng);
-  }
 });
 
 function teleportTo(lat, lon) {
@@ -773,28 +642,18 @@ function handleMessage(m) {
 // ---- Button wiring ----
 //
 $start.addEventListener('click', () => {
-  const meta = currentProfileMeta();
-  if (meta.is_random_walk) {
-    if (waypoints.length === 0 && !deviceMarker) {
-      setStatus('先點地圖選起點，或瞬移到某處', 'error');
-      return;
-    }
-  } else {
-    // Route mode: 1 waypoint is enough (server prepends current position
-    // as start). 0 waypoints = need at least a destination.
-    if (waypoints.length === 0) {
-      setStatus('點地圖選一個目的地（起點 = 手機目前位置）', 'error');
-      return;
-    }
+  if (!deviceMarker) {
+    setStatus('先瞬移到某處當起點', 'error');
+    return;
   }
+  // Only rwalk supported now — uses current device position as center
   ws.send(JSON.stringify({
     type: 'start',
     profile: $profile.value,
-    waypoints: waypoints.map(w => [w.lat, w.lon]),
+    waypoints: [],
   }));
 });
 $stop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
-document.getElementById('clearRoute').addEventListener('click', clearRoute);
 document.getElementById('clearLoc').addEventListener('click', () => {
   ws.send(JSON.stringify({ type: 'clear' }));
 });
@@ -944,17 +803,39 @@ fetch('/api/profiles')
       opt.textContent = `${p.label}  ·  ${p.nominal_kmh} km/h${tag}`;
       $profile.append(opt);
     }
-    updateRwalkCircle();  // draw initial circle if first profile happens to be rwalk
+    refreshProfileUI();
   })
   .catch(() => setStatus('無法載入 profiles', 'error'));
 
-$profile.addEventListener('change', () => {
-  updateRwalkCircle();
+const $radiusSection = document.getElementById('radiusSection');
+const $radiusSlider = document.getElementById('radiusSlider');
+const $radiusVal = document.getElementById('radiusVal');
+
+function refreshProfileUI() {
   const meta = currentProfileMeta();
   if (meta.is_random_walk) {
     $start.textContent = '🌸 開始漫步種花';
+    $radiusSection.style.display = '';
+    // Sync slider to profile's default radius on first view
+    if (meta.max_radius_m && !$radiusSlider.dataset.initialized) {
+      $radiusSlider.value = meta.max_radius_m;
+      $radiusVal.textContent = `${meta.max_radius_m} m`;
+      $radiusSlider.dataset.initialized = '1';
+    }
   } else {
     $start.textContent = '▶ 開始移動';
+    $radiusSection.style.display = 'none';
+  }
+  updateRwalkCircle();
+}
+
+$profile.addEventListener('change', refreshProfileUI);
+
+$radiusSlider.addEventListener('input', () => {
+  $radiusVal.textContent = `${$radiusSlider.value} m`;
+  updateRwalkCircle();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'set_radius', radius_m: parseInt($radiusSlider.value) }));
   }
 });
 
