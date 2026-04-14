@@ -416,23 +416,31 @@ class DeviceSession:
         #   3. Plain usbmux (USB direct). Always works when plugged in,
         #      always dies on unplug.
         #
-        # Wi-Fi requires a previously-saved pair record. On first USB
-        # connection we auto-save one into ~/.pymobiledevice3/<udid>.plist
-        # so subsequent restarts can go straight to Wi-Fi.
-        lockdown = await _try_wifi(self._stack)
-        if lockdown is not None:
-            self.path = "legacy-wifi"
-        else:
-            lockdown = await _try_mobdev2_linklocal(self._stack)
+        # For iOS ≤16, prefer USB if available — Wi-Fi TCP lockdown can
+        # silently fail on developer-service calls (missing escrow bag).
+        # Fall back to Wi-Fi only when USB isn't plugged.
+        lockdown = None
+        try:
+            lockdown = await (
+                create_using_usbmux(serial=TARGET_UDID) if TARGET_UDID
+                else create_using_usbmux()
+            )
+            self._stack.push_async_callback(lockdown.close)
+            self.path = "legacy-usb"
+            await _maybe_save_pair_record(lockdown)
+        except Exception:
+            lockdown = None
+
+        if lockdown is None:
+            lockdown = await _try_wifi(self._stack)
             if lockdown is not None:
-                self.path = "legacy-mobdev2"
+                self.path = "legacy-wifi"
             else:
-                lockdown = await create_using_usbmux(serial=TARGET_UDID) if TARGET_UDID else await create_using_usbmux()
-                self._stack.push_async_callback(lockdown.close)
-                self.path = "legacy-usb"
-                # Opportunistically persist a pair record so the next
-                # server restart can pick Wi-Fi without needing USB.
-                await _maybe_save_pair_record(lockdown)
+                lockdown = await _try_mobdev2_linklocal(self._stack)
+                if lockdown is not None:
+                    self.path = "legacy-mobdev2"
+        if lockdown is None:
+            raise RuntimeError("no device reachable via USB or Wi-Fi")
 
         self.udid = lockdown.udid
         self.product = f"{lockdown.product_type} / iOS {lockdown.product_version}"
