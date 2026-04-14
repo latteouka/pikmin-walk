@@ -389,12 +389,19 @@ class DeviceSession:
                 rsd = rsds[0]
                 for extra in rsds[1:]:
                     await extra.close()
-                dvt = await self._stack.enter_async_context(DvtProvider(rsd))
-                self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
-                self.udid = rsd.udid
-                self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
-                self.path = "dvt"
-                return
+                # iOS 16 and older don't support DVT LocationSimulation —
+                # tunneld might return them but set() silently no-ops.
+                # Force those to the legacy path.
+                ios_major = int(rsd.product_version.split(".")[0])
+                if ios_major < 17:
+                    await rsd.close()
+                else:
+                    dvt = await self._stack.enter_async_context(DvtProvider(rsd))
+                    self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
+                    self.udid = rsd.udid
+                    self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
+                    self.path = "dvt"
+                    return
 
         # Legacy path (iOS ≤16). Three transports to try, in priority
         # order — we want to end up on a Wi-Fi lockdown session so that

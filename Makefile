@@ -64,6 +64,18 @@ stop-ipad: ## Stop iPad server only
 stop-iphone: ## Stop iPhone server only
 	@pkill -f "server.py --port $(IPHONE_PORT)" 2>/dev/null && echo "✓ iPhone stopped" || echo "not running"
 
+restart-ipad: stop-ipad ## Restart iPad server
+	@sleep 1
+	@$(MAKE) start-ipad
+
+restart-iphone: stop-iphone ## Restart iPhone server
+	@sleep 1
+	@$(MAKE) start-iphone
+
+restart-all: stop ## Restart BOTH servers
+	@sleep 1
+	@$(MAKE) start-all
+
 start-all: tunnel start-ipad start-iphone ## Start BOTH iPad + iPhone servers
 
 # ─── Shared ──────────────────────────────────────────────────────────────
