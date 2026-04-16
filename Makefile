@@ -81,6 +81,21 @@ restart-all: stop ## Restart BOTH servers
 
 start-all: tunnel start-ipad start-iphone ## Start BOTH iPad + iPhone servers
 
+up: osrm-up tunnel start-all ## Start EVERYTHING (OSRM + tunneld + both servers)
+
+# ─── OSRM ────────────────────────────────────────────────────────────────
+
+osrm-up: ## Start OSRM Docker containers (Ontario + Taiwan)
+	@docker ps --format '{{.Names}}' | grep -q osrm-ontario || \
+		docker start osrm-ontario >/dev/null 2>&1 && echo "✓ osrm-ontario (:5050)" || \
+		echo "  ⚠ osrm-ontario missing — docker run needed"
+	@docker ps --format '{{.Names}}' | grep -q osrm-taiwan || \
+		docker start osrm-taiwan >/dev/null 2>&1 && echo "✓ osrm-taiwan (:5051)" || \
+		echo "  ⚠ osrm-taiwan missing — docker run needed"
+
+osrm-down: ## Stop OSRM containers
+	@docker stop osrm-ontario osrm-taiwan 2>/dev/null | sed 's/^/✓ /' || true
+
 # ─── Shared ──────────────────────────────────────────────────────────────
 
 tunnel: ## Start tunneld if not running (sudo, iOS 17+ only)
