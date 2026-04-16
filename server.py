@@ -353,6 +353,13 @@ class DeviceSession:
         # overlapping Bonjour browses (which caused CPU spin).
         self._reconnect_lock = asyncio.Lock()
         self._last_reconnect_at: float = 0.0
+        # Idle tracking for auto-shutdown
+        self.last_activity: float = 0.0
+        self.active_ws: int = 0
+
+    def touch(self) -> None:
+        """Mark activity (called on any user action)."""
+        self.last_activity = asyncio.get_event_loop().time()
         # Last coordinate we successfully pushed to the phone. The iOS
         # simulate-location service is write-only, so this cache is the
         # only way the UI can answer "where is the device right now?".
@@ -730,6 +737,8 @@ async def profiles_endpoint(request):
 
 async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
+    session.active_ws += 1
+    session.touch()
     # Auto-reconnect if device dropped (screen off, USB unplug, etc)
     if session.loc_sim is None:
         await session.reconnect()
@@ -756,6 +765,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     try:
         while True:
             msg = await websocket.receive_json()
+            session.touch()
             action = msg.get("type")
             if action == "start":
                 await _handle_start(websocket, msg)
@@ -793,9 +803,10 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        # If the browser goes away mid-run, stop the spoof so the phone
-        # doesn't get stuck at a fake location.
         await session.stop_runner()
+    finally:
+        session.active_ws = max(0, session.active_ws - 1)
+        session.touch()
 
 
 async def _handle_start(ws: WebSocket, msg: dict) -> None:
@@ -1183,14 +1194,32 @@ async def _handle_stop(ws: WebSocket) -> None:
 # --- Lifespan + app -------------------------------------------------------
 
 
+# Idle timeout (minutes). Server self-exits after this much time with
+# no connected WS clients and no running simulation task. Set via
+# --idle-minutes CLI arg (default 30). 0 disables auto-shutdown.
+IDLE_MINUTES: float = 30.0
+
+
+async def _idle_watchdog() -> None:
+    """Background task: exit process when idle for too long."""
+    if IDLE_MINUTES <= 0:
+        return
+    while True:
+        await asyncio.sleep(60)
+        now = asyncio.get_event_loop().time()
+        idle = now - session.last_activity
+        has_work = session.active_ws > 0 or (
+            session.running_task and not session.running_task.done()
+        )
+        if idle > IDLE_MINUTES * 60 and not has_work:
+            print(f"💤 idle {idle/60:.0f}m, no clients, no task — shutting down")
+            import os, signal
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+
+
 @asynccontextmanager
 async def lifespan(app):
-    # Restore the last-known position from disk BEFORE connecting, so the
-    # hello message reflects cached state even if the device link hiccups.
-    # We intentionally do NOT push this back to the phone at startup — the
-    # phone should have kept the spoof itself (iOS persists it across
-    # session drops as long as a paired tool reconnects in time), and we
-    # avoid clobbering whatever the real current state is.
     cached = _load_position()
     if cached is not None:
         session.last_position = cached
@@ -1203,7 +1232,18 @@ async def lifespan(app):
         print(f"⚠ could not connect to device: {e}")
         print("  iOS 17+ : sudo pymobiledevice3 remote tunneld")
         print("  iOS ≤16 : enable Developer Mode on the phone + mount DDI")
+
+    # Start watchdog
+    session.last_activity = asyncio.get_event_loop().time()
+    watchdog = asyncio.create_task(_idle_watchdog())
+
     yield
+
+    watchdog.cancel()
+    try:
+        await watchdog
+    except (asyncio.CancelledError, Exception):
+        pass
     await session.close()
     print("✓ closed device session")
 
@@ -1233,9 +1273,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=7766, help="HTTP port")
     parser.add_argument("--udid", type=str, default=None, help="Device UDID (pins session to one device)")
+    parser.add_argument("--idle-minutes", type=float, default=30.0,
+                        help="Auto-exit after N minutes idle (0 = disabled)")
     args = parser.parse_args()
 
     TARGET_UDID = args.udid
+    IDLE_MINUTES = args.idle_minutes
     if TARGET_UDID:
         # Separate state file per device so bookmarks/last_position don't collide
         STATE_FILE = HERE / f"state-{TARGET_UDID[:12]}.json"

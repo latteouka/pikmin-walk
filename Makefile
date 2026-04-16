@@ -97,6 +97,12 @@ tunnel: ## Start tunneld if not running (sudo, iOS 17+ only)
 kill-tunnel: ## Stop tunneld
 	@sudo pkill -f "pymobiledevice3.*tunneld" 2>/dev/null && echo "✓ tunneld stopped" || echo "not running"
 
+cleanup: ## Stop EVERYTHING (servers + tunneld + OSRM containers)
+	@pkill -f "uv run server.py" 2>/dev/null && echo "✓ servers" || echo "  (no servers)"
+	@sudo pkill -f "pymobiledevice3.*tunneld" 2>/dev/null && echo "✓ tunneld" || echo "  (no tunneld)"
+	@docker stop osrm-ontario osrm-taiwan 2>/dev/null | sed 's/^/✓ /' || echo "  (no OSRM containers)"
+	@echo "done"
+
 status: ## Show running status (all servers + tunneld + devices)
 	@echo "== tunneld =="
 	@pgrep -f "pymobiledevice3.*tunneld" >/dev/null 2>&1 && \
