@@ -45,7 +45,10 @@ start-ipad: tunnel ## Start iPad server on port 7766
 			echo "✗ failed — cat /tmp/pikmin-ipad.log"; \
 	fi
 
-start-iphone: ## Start iPhone server on port 7767 (no tunneld needed for iOS 16)
+mount-iphone-ddi: ## Mount DeveloperDiskImage on iPhone (needed after reboot)
+	@uv run --quiet --with pymobiledevice3 python scripts/mount_ddi.py $(IPHONE_UDID) 2>&1 | tail -1
+
+start-iphone: mount-iphone-ddi ## Start iPhone server on port 7767 (auto-mounts DDI)
 	@if lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
 		echo "iPhone server already running on :$(IPHONE_PORT)"; \
 	else \

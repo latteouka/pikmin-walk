@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pymobiledevice3>=4.14",
 #     "starlette>=1.0",
-#     "uvicorn[standard]>=0.44",
+#     "uvicorn>=0.44",
 #     "httpx>=0.28",
 # ]
 # ///
@@ -349,23 +349,101 @@ class DeviceSession:
         self.live_radius_m: float = 1000.0
         # Pause flag — runners check each tick and sleep until unpaused.
         self.paused: bool = False
+        # Reconnect rate-limiting to prevent WS reconnect storm from spawning
+        # overlapping Bonjour browses (which caused CPU spin).
+        self._reconnect_lock = asyncio.Lock()
+        self._last_reconnect_at: float = 0.0
         # Last coordinate we successfully pushed to the phone. The iOS
         # simulate-location service is write-only, so this cache is the
         # only way the UI can answer "where is the device right now?".
         self.last_position: tuple[float, float] | None = None
 
+    async def reconnect(self) -> bool:
+        """Tear down the current session and try to reconnect.
+
+        Serialized by a lock (one reconnect at a time) and rate-limited
+        (min 10s between attempts) so a WS reconnect storm can't spawn
+        overlapping Bonjour browses.
+        """
+        now = asyncio.get_event_loop().time()
+        if self.loc_sim is not None:
+            return True  # already connected
+        if now - self._last_reconnect_at < 10.0:
+            return False  # cooling down
+        async with self._reconnect_lock:
+            if self.loc_sim is not None:
+                return True
+            self._last_reconnect_at = asyncio.get_event_loop().time()
+            print("⟳ reconnecting to device...")
+
+            self.loc_sim = None
+            self.path = None
+            try:
+                await self._stack.aclose()
+            except Exception:
+                pass
+            self._stack = AsyncExitStack()
+
+            if TARGET_UDID:
+                try:
+                    from pymobiledevice3.services.mobile_image_mounter import (
+                        auto_mount_developer,
+                        AlreadyMountedError,
+                    )
+                    ld = await create_using_usbmux(serial=TARGET_UDID)
+                    try:
+                        await auto_mount_developer(ld, xcode=str(Path.home() / ".pmd_xcode"))
+                        print("  ↳ DDI mounted")
+                    except AlreadyMountedError:
+                        pass
+                    except Exception:
+                        pass
+                    await ld.close()
+                except Exception:
+                    pass
+
+            try:
+                await self.connect()
+                print(f"✓ reconnected: {self.udid} via {self.path}")
+                return True
+            except Exception as e:
+                print(f"✗ reconnect failed: {e}")
+                return False
+
     async def set_location(self, lat: float, lon: float) -> None:
-        """Push a coordinate to the phone and remember it (disk + memory)."""
-        assert self.loc_sim is not None
-        await self.loc_sim.set(lat, lon)
-        self.last_position = (lat, lon)
-        _save_position(self.last_position)
+        """Push a coordinate to the phone. Auto-reconnects on failure."""
+        for attempt in range(2):
+            try:
+                if self.loc_sim is None:
+                    raise ConnectionError("not connected")
+                await self.loc_sim.set(lat, lon)
+                self.last_position = (lat, lon)
+                _save_position(self.last_position)
+                return
+            except Exception as e:
+                if attempt == 0:
+                    print(f"set_location failed ({e}), attempting reconnect...")
+                    if not await self.reconnect():
+                        raise
+                else:
+                    raise
 
     async def clear_location(self) -> None:
-        assert self.loc_sim is not None
-        await self.loc_sim.clear()
-        self.last_position = None
-        _save_position(None)
+        for attempt in range(2):
+            try:
+                if self.loc_sim is None:
+                    raise ConnectionError("not connected")
+                await self.loc_sim.clear()
+                self.last_position = None
+                _save_position(None)
+                return
+            except Exception as e:
+                if attempt == 0:
+                    print(f"clear failed ({e}), attempting reconnect...")
+                    if not await self.reconnect():
+                        raise
+                else:
+                    raise
 
     async def connect(self) -> None:
         # Try iOS 17+ tunneld first — if tunneld is up, a device is tunnelled
@@ -652,6 +730,9 @@ async def profiles_endpoint(request):
 
 async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
+    # Auto-reconnect if device dropped (screen off, USB unplug, etc)
+    if session.loc_sim is None:
+        await session.reconnect()
     await websocket.send_json(
         {
             "type": "hello",
@@ -757,17 +838,6 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
             await ws.send_json({"type": "error", "message": "先瞬移到某處，再點一個目的地"})
             return
 
-    if session.loc_sim is None:
-        await ws.send_json(
-            {
-                "type": "error",
-                "message": (
-                    "手機還沒連上。iOS 17+ 需要 `sudo pymobiledevice3 remote tunneld`；"
-                    "iOS ≤16 需要開發者模式開啟 + DDI 已掛載。"
-                ),
-            }
-        )
-        return
     if session.running_task and not session.running_task.done():
         await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
         return
@@ -879,9 +949,6 @@ async def _handle_start_road_walk(ws: WebSocket, msg: dict) -> None:
     radius_m = float(msg.get("radius_m", 400))
     speed_kmh = float(msg.get("speed_kmh", 19))
 
-    if session.loc_sim is None:
-        await ws.send_json({"type": "error", "message": "手機未連線"})
-        return
     if session.running_task and not session.running_task.done():
         await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
         return
@@ -1026,9 +1093,6 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     if not raw_route or len(raw_route) < 2:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
         return
-    if session.loc_sim is None:
-        await ws.send_json({"type": "error", "message": "手機未連線"})
-        return
     if session.running_task and not session.running_task.done():
         await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
         return
@@ -1091,9 +1155,6 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
 
 async def _handle_teleport(ws: WebSocket, msg: dict) -> None:
-    if session.loc_sim is None:
-        await ws.send_json({"type": "error", "message": "手機還沒連上"})
-        return
     if session.running_task and not session.running_task.done():
         await ws.send_json({"type": "error", "message": "模擬執行中，先按停止再瞬移"})
         return
@@ -1182,4 +1243,7 @@ if __name__ == "__main__":
         print(f"State file: {STATE_FILE.name}")
 
     print(f"Pikmin Walker UI  →  http://localhost:{args.port}")
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    # loop=asyncio (stdlib) — avoid uvloop's UDPTransport bugs when
+    # Bonjour browse connections fail. watchfiles never loads without reload.
+    uvicorn.run(app, host="127.0.0.1", port=args.port,
+                log_level="warning", loop="asyncio")
