@@ -356,14 +356,14 @@ class DeviceSession:
         # Idle tracking for auto-shutdown
         self.last_activity: float = 0.0
         self.active_ws: int = 0
-
-    def touch(self) -> None:
-        """Mark activity (called on any user action)."""
-        self.last_activity = asyncio.get_event_loop().time()
         # Last coordinate we successfully pushed to the phone. The iOS
         # simulate-location service is write-only, so this cache is the
         # only way the UI can answer "where is the device right now?".
         self.last_position: tuple[float, float] | None = None
+
+    def touch(self) -> None:
+        """Mark activity (called on any user action)."""
+        self.last_activity = asyncio.get_event_loop().time()
 
     async def reconnect(self) -> bool:
         """Tear down the current session and try to reconnect.
