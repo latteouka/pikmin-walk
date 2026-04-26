@@ -790,7 +790,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     pass
             elif action == "set_radius":
                 try:
-                    session.live_radius_m = max(50.0, min(10000.0, float(msg.get("radius_m", 1000))))
+                    session.live_radius_m = max(30.0, min(10000.0, float(msg.get("radius_m", 1000))))
                 except (TypeError, ValueError):
                     pass
             elif action == "clear":
@@ -864,7 +864,7 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
     # all three entry points agree on what's a valid value.
     if is_rwalk:
         try:
-            initial_radius_m = max(50.0, min(10000.0, float(msg.get("radius_m", profile.max_radius_m))))
+            initial_radius_m = max(30.0, min(10000.0, float(msg.get("radius_m", profile.max_radius_m))))
         except (TypeError, ValueError):
             initial_radius_m = profile.max_radius_m
         try:
