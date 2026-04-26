@@ -168,6 +168,18 @@ PROFILES: dict[str, Profile] = {
         trail_repulsion_gain=0.15,
         trail_memory_ticks=300,  # 5 min @ 1 Hz
     ),
+    # Tight deterministic loop, for Pikmin Bloom step-farming in a tiny
+    # area (think: 5m circle at the desk). At small radii random_walk
+    # just bounces off the soft boundary every tick, so we use circle_walk
+    # instead — see the function for details.
+    "circle": Profile(
+        label="原地繞圈（種花用）",
+        nominal_kmh=4.5,        # actual walking pace; Niantic's ceiling is ~6
+        tick_s=1.0,
+        speed_jitter=0.0,        # circle_walk applies its own angular jitter
+        position_jitter_m=0.5,   # tight loops can't afford big GPS noise
+        max_radius_m=5.0,        # default 5m loop
+    ),
 }
 
 
@@ -425,6 +437,58 @@ def random_walk(
         trail.append(current)
 
         yield Tick(jitter_position(current, profile.position_jitter_m, rng))
+
+
+def circle_walk(
+    center: Waypoint,
+    profile: Profile,
+    rng: random.Random,
+    get_radius: "callable | None" = None,
+    get_speed_kmh: "callable | None" = None,
+) -> Iterator[Tick]:
+    """Walk a near-circular path around `center` at the slider radius.
+
+    Use this instead of random_walk when the radius is small enough that
+    diffusion can't form a loop (≈ < 30m): the walker would just bounce
+    against the soft boundary on every tick. A deterministic circle gives
+    a clean trace and steady distance accumulation — exactly what a
+    Pikmin Bloom step counter wants.
+
+    Per tick:
+      - advance angle by arc / radius, so step length tracks profile speed
+      - add ±5° gaussian noise to the angular step so the loop isn't a
+        metronome (anti-cheat heuristics flag perfectly periodic motion)
+      - apply ±5% radial breathing so the path isn't a perfect compass
+        arc (same reason)
+      - emit with `position_jitter_m` GPS noise on top
+
+    Direction (CW vs CCW) is picked once at start; radius and speed are
+    read each tick so the UI sliders apply live.
+    """
+    direction = rng.choice([1.0, -1.0])
+    angle = rng.uniform(0.0, 2.0 * math.pi)
+    radius0 = get_radius() if get_radius else profile.max_radius_m
+    yield Tick(
+        destination_point(center, angle, radius0),
+        note=f"start circle (r={radius0:.1f}m, {'CW' if direction > 0 else 'CCW'})",
+    )
+
+    while True:
+        radius = get_radius() if get_radius else profile.max_radius_m
+        speed_mps = (get_speed_kmh() if get_speed_kmh else profile.nominal_kmh) * 1000.0 / 3600.0
+        arc_m = speed_mps * profile.tick_s
+
+        # Angular step (radians), with gaussian jitter so the angular
+        # velocity isn't constant. σ = 5°/tick is small enough that the
+        # loop visually remains a circle.
+        d_angle = direction * arc_m / max(0.5, radius)
+        d_angle += rng.gauss(0.0, math.radians(5.0))
+        angle += d_angle
+
+        # Radial breathing: ±5% so the trace isn't a clean compass arc
+        r = max(0.5, radius * (1.0 + rng.gauss(0.0, 0.05)))
+        pos = destination_point(center, angle, r)
+        yield Tick(jitter_position(pos, profile.position_jitter_m, rng))
 
 
 def simulate(route: list[Waypoint], profile: Profile, rng: random.Random) -> Iterator[Tick]:

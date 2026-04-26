@@ -52,7 +52,7 @@ from pymobiledevice3.services.dvt.instruments.location_simulation import Locatio
 from pymobiledevice3.services.simulate_location import DtSimulateLocation
 from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS, get_tunneld_devices
 
-from pikmin_walk import PROFILES, haversine_m, random_walk, simulate
+from pikmin_walk import PROFILES, circle_walk, haversine_m, random_walk, simulate
 
 HERE = Path(__file__).parent
 STATIC_DIR = HERE / "static"
@@ -790,7 +790,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                     pass
             elif action == "set_radius":
                 try:
-                    session.live_radius_m = max(10.0, min(10000.0, float(msg.get("radius_m", 1000))))
+                    session.live_radius_m = max(1.0, min(10000.0, float(msg.get("radius_m", 1000))))
                 except (TypeError, ValueError):
                     pass
             elif action == "clear":
@@ -864,7 +864,7 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
     # all three entry points agree on what's a valid value.
     if is_rwalk:
         try:
-            initial_radius_m = max(10.0, min(10000.0, float(msg.get("radius_m", profile.max_radius_m))))
+            initial_radius_m = max(1.0, min(10000.0, float(msg.get("radius_m", profile.max_radius_m))))
         except (TypeError, ValueError):
             initial_radius_m = profile.max_radius_m
         try:
@@ -894,7 +894,11 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
             if is_rwalk:
                 session.live_radius_m = initial_radius_m
                 session.live_speed_kmh = initial_speed_kmh
-                ticks_iter = random_walk(
+                # Tight loops use circle_walk; everything else diffuses
+                # via random_walk. Both honor the live radius/speed
+                # sliders.
+                walker = circle_walk if profile_name == "circle" else random_walk
+                ticks_iter = walker(
                     center, profile, rng,
                     get_radius=lambda: session.live_radius_m,
                     get_speed_kmh=lambda: session.live_speed_kmh,

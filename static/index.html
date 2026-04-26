@@ -351,7 +351,7 @@
     <div class="section">
       <h2>漫步半徑</h2>
       <div style="display:flex;align-items:center;gap:10px;">
-        <input type="range" id="radiusSlider" min="10" max="5000" value="1000" step="10" style="flex:1;accent-color:var(--accent);">
+        <input type="range" id="radiusSlider" min="1" max="5000" value="1000" step="1" style="flex:1;accent-color:var(--accent);">
         <span id="radiusVal" style="font-family:ui-monospace,monospace;font-size:13px;font-weight:600;min-width:60px;">1000 m</span>
       </div>
       <div class="hint">移動中可即時調整</div>
@@ -836,15 +836,16 @@ const $speedVal = document.getElementById('speedVal');
 function refreshProfileUI() {
   const meta = currentProfileMeta();
   $start.textContent = '🌸 開始漫步種花';
-  if (meta.max_radius_m && !$radiusSlider.dataset.initialized) {
+  // Reset both sliders to the selected profile's defaults — rwalk and
+  // circle have very different sensible radii (1250m vs 5m), so locking
+  // the slider on first load would leave one of them feeling broken.
+  if (meta.max_radius_m) {
     $radiusSlider.value = meta.max_radius_m;
     $radiusVal.textContent = `${meta.max_radius_m} m`;
-    $radiusSlider.dataset.initialized = '1';
   }
-  if (meta.nominal_kmh && !$speedSlider.dataset.initialized) {
+  if (meta.nominal_kmh) {
     $speedSlider.value = meta.nominal_kmh;
     $speedVal.textContent = `${meta.nominal_kmh} km/h`;
-    $speedSlider.dataset.initialized = '1';
   }
   updateRwalkCircle();
 }
