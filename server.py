@@ -858,6 +858,23 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
     else:
         total_m = sum(haversine_m(a, b) for a, b in zip(waypoints, waypoints[1:]))
 
+    # Resolve initial speed/radius from the UI's current slider values,
+    # falling back to profile defaults if the client didn't include them.
+    # Same clamp bounds as the live set_radius / set_speed WS handlers, so
+    # all three entry points agree on what's a valid value.
+    if is_rwalk:
+        try:
+            initial_radius_m = max(50.0, min(10000.0, float(msg.get("radius_m", profile.max_radius_m))))
+        except (TypeError, ValueError):
+            initial_radius_m = profile.max_radius_m
+        try:
+            initial_speed_kmh = max(1.0, min(50.0, float(msg.get("speed_kmh", profile.nominal_kmh))))
+        except (TypeError, ValueError):
+            initial_speed_kmh = profile.nominal_kmh
+    else:
+        initial_radius_m = 0.0
+        initial_speed_kmh = profile.nominal_kmh
+
     async def runner() -> None:
         rng = random.Random()
         try:
@@ -867,16 +884,16 @@ async def _handle_start(ws: WebSocket, msg: dict) -> None:
                     "profile": profile_name,
                     "label": profile.label,
                     "total_m": total_m,
-                    "nominal_kmh": profile.nominal_kmh,
+                    "nominal_kmh": initial_speed_kmh,
                     "is_random_walk": is_rwalk,
                     "center": {"lat": center[0], "lon": center[1]} if is_rwalk else None,
-                    "radius_m": profile.max_radius_m if is_rwalk else 0.0,
+                    "radius_m": initial_radius_m if is_rwalk else 0.0,
                 }
             )
             elapsed = 0.0
             if is_rwalk:
-                session.live_radius_m = profile.max_radius_m
-                session.live_speed_kmh = profile.nominal_kmh
+                session.live_radius_m = initial_radius_m
+                session.live_speed_kmh = initial_speed_kmh
                 ticks_iter = random_walk(
                     center, profile, rng,
                     get_radius=lambda: session.live_radius_m,

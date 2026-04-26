@@ -662,11 +662,16 @@ $start.addEventListener('click', () => {
     setStatus('先瞬移到某處當起點', 'error');
     return;
   }
-  // Only rwalk supported now — uses current device position as center
+  // Only rwalk supported now — uses current device position as center.
+  // Pass the slider values directly so the run starts with whatever the
+  // user currently sees, instead of the server snapping back to profile
+  // defaults.
   ws.send(JSON.stringify({
     type: 'start',
     profile: $profile.value,
     waypoints: [],
+    radius_m: parseInt($radiusSlider.value),
+    speed_kmh: parseInt($speedSlider.value),
   }));
 });
 $stop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
