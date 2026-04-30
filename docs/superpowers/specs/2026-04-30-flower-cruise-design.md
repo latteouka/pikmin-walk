@@ -203,10 +203,10 @@ function parseFlowers(text) {
 - 多個 flower set 切換 — v1 不做
 - 跳過某些花 / 暫時忽略 — v1 不做
 
-## Open Questions
+## Resolved
 
-- 頁面 URL 用 `/flower-cruise` 還是 `/cruise`？— 草稿用 `/flower-cruise`，可以調整
-- 主頁 `/` 要不要加「→ 花朵巡航」的入口連結？— 預設加，這是 trivial 工作
+- 頁面 URL：**`/flower-cruise`**
+- 主頁 `/` **加上「→ 花朵巡航」入口連結**（與既有 `/walk` 連結並列）
 
 ## Implementation Plan Hint（給下一步 writing-plans）
 
