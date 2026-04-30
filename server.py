@@ -1121,7 +1121,7 @@ async def _osrm_trip_order(
     """
     coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
     data = await _osrm_fetch(
-        f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&geometries=geojson&overview=false"
+        f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&overview=false"
     )
     if data is None or not data.get("waypoints"):
         return None
