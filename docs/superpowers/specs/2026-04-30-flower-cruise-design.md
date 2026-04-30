@@ -16,7 +16,7 @@
 | 拜訪順序 | OSRM Trip API（TSP）— 只取順序，不取幾何 |
 | 花跟花之間的路徑 | **直線（great-circle）**，不沿步行路網 |
 | 路徑模式 | **無限 loop**（走完最後一朵接回第一朵） |
-| 預設速度 | 19 km/h（slider 範圍 1–50 km/h，與既有 loop_walk 一致） |
+| 預設速度 | 19 km/h（slider 範圍 3–25 km/h，與既有 walk.html 一致） |
 | 輸入 UX | textarea 貼上，分隔符寬鬆（換行/逗號/空白/tab 全吃） |
 | UI 位置 | **獨立頁面** `/flower-cruise`，新 HTML 檔 |
 | 走路階段 | 100% 複用 `_handle_start_loop_walk`，server 端不需要新 runner |
