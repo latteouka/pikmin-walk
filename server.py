@@ -1104,6 +1104,36 @@ async def _osrm_trip_route(
     return [(c[1], c[0]) for c in data["trips"][0]["geometry"]["coordinates"]]
 
 
+async def _osrm_trip_order(
+    waypoints: list[tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    """Return waypoints reordered by OSRM Trip TSP, no geometry.
+
+    Unlike _osrm_trip_route which returns the routed polyline along roads,
+    this function asks OSRM only for the optimal *visit order* of the
+    given points. The caller is expected to connect them with great-circle
+    lines themselves (花朵巡航 wants direct lines between flowers, not
+    road geometry).
+
+    Uses source=first to pin the starting point — without it OSRM is free
+    to pick any waypoint as the start, which makes the order non-stable
+    across previews of the same input.
+    """
+    coords_str = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
+    data = await _osrm_fetch(
+        f"/trip/v1/foot/{coords_str}?roundtrip=true&source=first&geometries=geojson&overview=false"
+    )
+    if data is None or not data.get("waypoints"):
+        return None
+    # data["waypoints"][i] corresponds to input[i]; its waypoint_index is
+    # the position in the optimized trip. Sort input indices by that.
+    order = sorted(
+        range(len(waypoints)),
+        key=lambda i: data["waypoints"][i]["waypoint_index"],
+    )
+    return [waypoints[i] for i in order]
+
+
 async def _osrm_loop_route(
     waypoints: list[tuple[float, float]],
 ) -> list[tuple[float, float]] | None:
