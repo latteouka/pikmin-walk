@@ -1,0 +1,14 @@
+# Per-machine Makefile overrides.
+#
+# Copy this file to `Makefile.local` (which is gitignored) and fill in
+# your device UDIDs. Run `make list-devices` to see them.
+#
+# Only needed if you use the multi-device targets (start-ipad / start-iphone).
+# The single-device `make start` target auto-detects without any config.
+
+IPAD_UDID   :=
+IPHONE_UDID :=
+
+# Optional: override default ports
+# IPAD_PORT   := 7766
+# IPHONE_PORT := 7767

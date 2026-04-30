@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.DS_Store
+osrm-data/
+
+# Runtime state — per-machine, contains device positions + bookmarks + API keys
+state.json
+state.json.tmp
+state-*.json
+shared.json
+shared.json.tmp
+
+# Per-machine Makefile overrides (device UDIDs etc)
+Makefile.local
+
+# Session / test artifacts
+.playwright-mcp/
+/*.png
+
