@@ -711,6 +711,59 @@ async def preview_loop(request):
     })
 
 
+async def preview_flower_cruise(request):
+    """Take a list of flower coords, return TSP-ordered list + lap stats.
+
+    Body: { flowers: [[lat, lon], ...] }
+    Returns: { ordered: [[lat, lon], ...], distance_km, lap_eta_min, count }
+
+    The lap distance is great-circle (not OSRM-routed), because the walker
+    will connect ordered flowers with straight lines, not road geometry.
+    Lap ETA assumes 19 km/h (the page's default; the actual speed is set
+    at start time and can be tuned live).
+    """
+    body = await request.json()
+    flowers = body.get("flowers")
+    if not isinstance(flowers, list):
+        return JSONResponse({"error": "flowers must be a list"}, status_code=400)
+
+    # Validate each flower
+    parsed: list[tuple[float, float]] = []
+    for item in flowers:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            return JSONResponse({"error": "each flower must be [lat, lon]"}, status_code=400)
+        try:
+            lat, lon = float(item[0]), float(item[1])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "flower coords must be numeric"}, status_code=400)
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return JSONResponse({"error": f"out-of-range coord: {lat},{lon}"}, status_code=400)
+        parsed.append((lat, lon))
+
+    if len(parsed) < 2:
+        return JSONResponse({"error": "至少需要 2 朵花"}, status_code=400)
+    if len(parsed) > 100:
+        # OSRM Trip API public server caps at ~100 waypoints
+        return JSONResponse({"error": f"花太多（{len(parsed)} > 100），請分批"}, status_code=400)
+
+    ordered = await _osrm_trip_order(parsed)
+    if ordered is None:
+        return JSONResponse({"error": "OSRM 無法規劃路線（網路或座標問題）"})
+
+    # Great-circle lap distance: ordered[0] → ordered[1] → ... → ordered[-1] → ordered[0]
+    from pikmin_walk import haversine_m
+    closed = ordered + [ordered[0]]
+    dist_m = sum(haversine_m(closed[i], closed[i + 1]) for i in range(len(closed) - 1))
+    lap_eta_min = (dist_m / 1000) / 19.0 * 60  # at default speed
+
+    return JSONResponse({
+        "ordered": [[lat, lon] for lat, lon in ordered],
+        "distance_km": dist_m / 1000,
+        "lap_eta_min": lap_eta_min,
+        "count": len(ordered),
+    })
+
+
 async def profiles_endpoint(request):
     # Only expose random-walk profiles — route-based profiles were removed
     # from the UI. `rwalk` is the only one in this category.
