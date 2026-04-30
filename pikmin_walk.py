@@ -458,9 +458,11 @@ def circle_walk(
       - advance angle by arc / radius, so step length tracks profile speed
       - add ±5° gaussian noise to the angular step so the loop isn't a
         metronome (anti-cheat heuristics flag perfectly periodic motion)
-      - apply ±5% radial breathing so the path isn't a perfect compass
-        arc (same reason)
-      - emit with `position_jitter_m` GPS noise on top
+      - apply inward-only radial breathing (≤5% inside) so the path
+        isn't a perfect compass arc but never crosses the boundary
+      - emit with `position_jitter_m` GPS noise on top, then clamp the
+        final point to the boundary so even the noisy output stays
+        inside the slider radius
 
     Direction (CW vs CCW) is picked once at start; radius and speed are
     read each tick so the UI sliders apply live.
@@ -485,10 +487,23 @@ def circle_walk(
         d_angle += rng.gauss(0.0, math.radians(5.0))
         angle += d_angle
 
-        # Radial breathing: ±5% so the trace isn't a clean compass arc
-        r = max(0.5, radius * (1.0 + rng.gauss(0.0, 0.05)))
+        # Inward-only radial breathing: walker drifts up to ~5% inside
+        # the boundary, never outside. Without this constraint the
+        # gaussian tail (and the GPS jitter below) would push the
+        # reported point past the green circle the user sees on the map.
+        r = max(0.5, radius * (1.0 - abs(rng.gauss(0.0, 0.05))))
         pos = destination_point(center, angle, r)
-        yield Tick(jitter_position(pos, profile.position_jitter_m, rng))
+
+        # Apply GPS jitter, then clamp back to the boundary if the noise
+        # pushed us outside. Some pile-up at the edge is fine; what we
+        # absolutely don't want is the trace drifting past the visible
+        # circle.
+        out = jitter_position(pos, profile.position_jitter_m, rng)
+        d = haversine_m(center, out)
+        if d > radius:
+            bearing = initial_bearing_rad(center, out)
+            out = destination_point(center, bearing, radius)
+        yield Tick(out)
 
 
 def simulate(route: list[Waypoint], profile: Profile, rng: random.Random) -> Iterator[Tick]:
