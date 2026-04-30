@@ -494,11 +494,19 @@ def circle_walk(
         r = max(0.5, radius * (1.0 - abs(rng.gauss(0.0, 0.05))))
         pos = destination_point(center, angle, r)
 
-        # Apply GPS jitter, then clamp back to the boundary if the noise
+        # GPS jitter scaled to radius (capped at the profile's static
+        # value). Without scaling, a 0.5 m σ at radius=5m is 10% of the
+        # circle and the clamp below fires constantly — at radius=200m
+        # the same σ is invisible. 5% of radius keeps the clamp rate
+        # similar across orders of magnitude; the cap keeps it sensible
+        # at very large circles where 5% would be unrealistically noisy.
+        jitter_m = min(profile.position_jitter_m, radius * 0.05)
+
+        # Apply the jitter, then clamp back to the boundary if the noise
         # pushed us outside. Some pile-up at the edge is fine; what we
         # absolutely don't want is the trace drifting past the visible
         # circle.
-        out = jitter_position(pos, profile.position_jitter_m, rng)
+        out = jitter_position(pos, jitter_m, rng)
         d = haversine_m(center, out)
         if d > radius:
             bearing = initial_bearing_rad(center, out)
