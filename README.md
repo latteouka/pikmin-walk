@@ -17,30 +17,23 @@ iOS GPS location simulation 工具，透過 [pymobiledevice3](https://github.com
 
 ## 前置需求
 
-- macOS (Apple Silicon / Intel)
-- [uv](https://docs.astral.sh/uv/) — Python 套件管理
-- **Python 3.13+**（iOS 18.2+ 的 TCP tunnel 需要 PSK cipher 支援）
+- **macOS** (Apple Silicon / Intel)
 - iPhone / iPad 已啟用 [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)
 - 手機已信任此 Mac（USB 插上後按「信任此電腦」）
 
-```bash
-# 安裝 pymobiledevice3（綁定 Python 3.13）
-uv tool install pymobiledevice3 --python 3.13
-```
+> Mac 端的依賴（uv、Python 3.13、pymobiledevice3）會由 `make install` 自動處理。
 
-## 快速開始（clone 後一行起跑）
+## 快速開始（clone 後兩行起跑）
 
 ```bash
 git clone https://github.com/latteouka/pikmin-walk.git
 cd pikmin-walk
 
-# 一次把 OSRM（如果有 docker container）+ tunneld + server 全起來
-make start
+make install      # 一次性：裝 uv、pymobiledevice3、列出裝置、印手機端 checklist
+make start        # 啟動 server（自動偵測裝置 + 拉 tunneld）
 ```
 
-打開 `http://localhost:7766` 即可。
-
-`make start` 會自動偵測你連著的 iOS 裝置；iOS 17+ 也會自動拉起 tunneld（需要 sudo 一次）。要看其他指令跑 `make help`。
+打開 `http://localhost:7766` 即可。要看其他指令跑 `make help`。
 
 ### iOS 16（不需要 tunneld，但要先掛 DDI）
 

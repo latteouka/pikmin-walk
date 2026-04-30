@@ -1,4 +1,4 @@
-.PHONY: start stop restart status tunnel kill-tunnel clear logs help \
+.PHONY: install start stop restart status tunnel kill-tunnel clear logs help \
         start-ipad start-iphone stop-ipad stop-iphone status-all list-devices
 
 # Per-machine overrides (device UDIDs etc). The file is gitignored — copy
@@ -17,6 +17,9 @@ IPHONE_UDID_FLAG := $(if $(IPHONE_UDID),--udid $(IPHONE_UDID))
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+
+install: ## One-time setup on macOS (uv + pymobiledevice3 + 裝置 checklist)
+	@bash scripts/install.sh
 
 # ─── Legacy single-device targets (use auto-detect) ──────────────────────
 
