@@ -567,6 +567,10 @@ async def walk_page(request):
     return FileResponse(STATIC_DIR / "walk.html")
 
 
+async def flower_cruise_page(request):
+    return FileResponse(STATIC_DIR / "flower-cruise.html")
+
+
 async def config_get(request):
     shared = _read_shared()
     return JSONResponse({
@@ -1357,7 +1361,9 @@ app = Starlette(
     routes=[
         Route("/", index),
         Route("/walk", walk_page),
+        Route("/flower-cruise", flower_cruise_page),
         Route("/api/preview-loop", preview_loop, methods=["POST"]),
+        Route("/api/preview-flower-cruise", preview_flower_cruise, methods=["POST"]),
         Route("/api/profiles", profiles_endpoint),
         Route("/api/config", config_get, methods=["GET"]),
         Route("/api/config", config_post, methods=["POST"]),
