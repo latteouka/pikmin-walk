@@ -50,7 +50,17 @@ fi
 echo
 step "偵測 USB 上的 iOS 裝置..."
 DEVICE_JSON=$(pymobiledevice3 usbmux list 2>/dev/null || echo "[]")
-COUNT=$(printf "%s" "$DEVICE_JSON" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+# Dedupe UDIDs — usbmux list sometimes returns the same device twice
+UDIDS=$(printf "%s" "$DEVICE_JSON" | python3 -c "
+import sys, json
+seen = set()
+for d in json.load(sys.stdin):
+    udid = d.get('UniqueDeviceID', '')
+    if udid and udid not in seen:
+        seen.add(udid)
+        print(udid)
+" 2>/dev/null || true)
+COUNT=$(printf "%s" "$UDIDS" | grep -c . || true)
 
 if [ "$COUNT" = "0" ]; then
     warn "沒偵測到裝置"
@@ -60,25 +70,67 @@ if [ "$COUNT" = "0" ]; then
     echo "    - 手機沒開「開發者模式」"
     echo "  請對照下方 checklist 處理後重跑 make install"
 else
-    ok "偵測到 $COUNT 台裝置："
+    ok "偵測到 $COUNT 台獨立裝置："
     printf "%s" "$DEVICE_JSON" | python3 -c "
 import sys, json
+seen = set()
 for d in json.load(sys.stdin):
+    udid = d.get('UniqueDeviceID', '')
+    if udid in seen: continue
+    seen.add(udid)
     name = d.get('DeviceName', '?')
     pt = d.get('ProductType', '?')
     pv = d.get('ProductVersion', '?')
-    udid = d.get('UniqueDeviceID', '')
     print(f'    {name} — {pt} / iOS {pv}  UDID={udid[:12]}…')
 "
 fi
 
+# ─── 4b. 為每台裝置自動設定 Wi-Fi tunnel（best-effort）─────────────
+if [ "$COUNT" != "0" ]; then
+    echo
+    step "為每台裝置設定 Wi-Fi tunnel（拔 USB 後仍可繼續操控）..."
+    mkdir -p "$HOME/.pymobiledevice3"
+    while IFS= read -r UDID; do
+        [ -z "$UDID" ] && continue
+        SHORT="${UDID:0:12}…"
+
+        # Step 1: enable wifi-connections (lockdown over Wi-Fi)
+        if pymobiledevice3 lockdown wifi-connections --udid "$UDID" --state on >/dev/null 2>&1; then
+            ok "[$SHORT] wifi-connections=on"
+        else
+            warn "[$SHORT] wifi-connections enable 失敗（裝置可能未信任，跳過）"
+            continue
+        fi
+
+        # Step 2: enable wifi-debugging (Bonjour broadcast on real Wi-Fi)
+        if uv run --quiet --with pymobiledevice3 --python 3.13 \
+                scripts/wifi_setup.py "$UDID" >/dev/null 2>&1; then
+            ok "[$SHORT] wifi-debugging=on"
+        else
+            warn "[$SHORT] wifi-debugging enable 失敗"
+        fi
+
+        # Step 3: save pair record so Wi-Fi TCP lockdown can read it
+        PAIR_FILE="$HOME/.pymobiledevice3/${UDID}.plist"
+        if pymobiledevice3 lockdown save-pair-record --udid "$UDID" "$PAIR_FILE" >/dev/null 2>&1; then
+            ok "[$SHORT] pair record → ~/.pymobiledevice3/${UDID:0:8}….plist"
+        else
+            warn "[$SHORT] pair record 存檔失敗"
+        fi
+    done <<< "$UDIDS"
+fi
+
 # ─── 5. 裝置端 checklist（手動）─────────────────────────────────
 echo
-echo "📱 iOS 裝置端設定（手動，在手機上操作）："
+echo "📱 iOS 裝置端設定 checklist（如果上面有偵測到裝置就大多完成了）："
 echo
 echo "    ☐ 設定 → 隱私權與安全性 → 開發者模式 → 開啟（會重啟手機）"
 echo "    ☐ USB 接上 Mac，手機跳「信任此電腦」按「信任」+ 輸入密碼"
 echo "    ☐ (iOS 17+) make start 會自動拉 tunneld，會問你 sudo 密碼"
+echo
+echo "  Wi-Fi 模式（拔 USB 後繼續操控）的前提："
+echo "    - Mac 跟手機在同一個 Wi-Fi（router 不能有 AP Client Isolation）"
+echo "    - 上面的「wifi-connections=on / wifi-debugging=on / pair record」全 ✓"
 echo
 
 # ─── 6. 下一步 ──────────────────────────────────────────────────
