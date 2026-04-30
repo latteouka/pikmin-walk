@@ -98,7 +98,7 @@
     .preview-info.error { color: var(--danger); border-color: var(--danger); }
 
     .stats-row {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
     }
     .stat {
       text-align: center; padding: 8px;
@@ -179,7 +179,6 @@
     <div class="stats-row" id="statsRow" style="display:none;">
       <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km</div></div>
       <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
-      <div class="stat"><div class="num" id="statLaps">0</div><div class="label">圈</div></div>
     </div>
 
     <div class="btn-row">
@@ -335,12 +334,11 @@ function addPreviewStat(num, label) {
 
 function setStatus(text, cls = '') { $status.textContent = text; $status.className = cls; }
 
-let totalDist = 0, startTime = null, lapCount = 0, statsTimer = null;
+let totalDist = 0, startTime = null, statsTimer = null;
 function resetStats() {
-  totalDist = 0; startTime = null; lapCount = 0;
+  totalDist = 0; startTime = null;
   document.getElementById('statDist').textContent = '0.0';
   document.getElementById('statTime').textContent = '0:00';
-  document.getElementById('statLaps').textContent = '0';
   if (statsTimer) clearInterval(statsTimer);
 }
 function startStatsTimer() {
@@ -378,9 +376,8 @@ $btnPreview.addEventListener('click', async () => {
       distance_km: data.distance_km,
       count: data.count,
     };
-    // Polyline = ordered + back to ordered[0]
-    const closed = data.ordered.concat([data.ordered[0]]);
-    routeLine.setLatLngs(closed);
+    // One-shot route: walker stops at the last flower, no return-to-start leg.
+    routeLine.setLatLngs(data.ordered);
     renderFlowerMarkers(data.ordered, true);
     map.fitBounds(routeLine.getBounds().pad(0.15));
     $preview.className = 'preview-info';
@@ -426,8 +423,8 @@ function handleMessage(m) {
       setStatus('巡航中…', 'running');
       break;
     case 'loop_lap':
-      lapCount++;
-      document.getElementById('statLaps').textContent = String(lapCount);
+      // Server emits this once per pass; in one-shot mode there's only ever
+      // one pass and no UI to update.
       break;
     case 'tick':
       updateDevice(m.lat, m.lon);
@@ -464,13 +461,12 @@ function handleMessage(m) {
 
 $btnStart.addEventListener('click', () => {
   if (!previewedRoute) return;
-  // Close the loop: append ordered[0] as the final waypoint so the runner
-  // returns to start before the next iteration.
-  const closed = previewedRoute.ordered.concat([previewedRoute.ordered[0]]);
+  // One-shot: walk the ordered flowers and stop at the last one.
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),
-    route: closed,
+    route: previewedRoute.ordered,
+    loop: false,
   }));
 });
 

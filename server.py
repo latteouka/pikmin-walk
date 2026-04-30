@@ -1205,9 +1205,15 @@ async def _osrm_loop_route(
 
 
 async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
-    """Walk a pre-computed route (from /api/preview-loop) in an infinite loop."""
+    """Walk a pre-computed route (from /api/preview-loop or /api/preview-flower-cruise).
+
+    Set msg["loop"] = False to walk the route once and stop at the last
+    waypoint (花朵巡航 mode). Default True keeps the infinite-loop behavior
+    used by /walk.
+    """
     raw_route = msg.get("route")
     speed_kmh = float(msg.get("speed_kmh", 19))
+    loop_mode = bool(msg.get("loop", True))
 
     if not raw_route or len(raw_route) < 2:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
@@ -1262,6 +1268,11 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                         await asyncio.sleep(tick_s)
                         while session.paused:
                             await asyncio.sleep(0.5)
+
+                if not loop_mode:
+                    break
+
+            await ws.send_json({"type": "done"})
 
         except asyncio.CancelledError:
             try:
