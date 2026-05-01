@@ -452,6 +452,46 @@ class DeviceSession:
                 else:
                     raise
 
+    async def _enter_dvt(self, rsd) -> bool:
+        """Enter DvtProvider + LocationSimulation context for this rsd.
+
+        On failure the partially-entered _stack is reset so the caller can
+        retry with a fresh rsd without leaving zombie context managers
+        registered. Returns True on success.
+        """
+        try:
+            dvt = await self._stack.enter_async_context(DvtProvider(rsd))
+            self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
+            self.udid = rsd.udid
+            self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
+            self.path = "dvt"
+            return True
+        except Exception as e:
+            print(f"  ↳ DVT enter failed: {type(e).__name__}: {e}")
+            self.loc_sim = None
+            self.path = None
+            try:
+                await self._stack.aclose()
+            except Exception:
+                pass
+            self._stack = AsyncExitStack()
+            return False
+
+    async def _cancel_tunneld_for(self, udid: str) -> None:
+        """Tell tunneld to drop a (likely ghost) tunnel for a specific UDID.
+
+        Used when entering DvtProvider over an rsd returned by tunneld fails
+        — that's a strong signal the tunnel's TCP socket is dead but tunneld
+        hasn't noticed yet. Per-UDID cancel (vs. /clear_tunnels) leaves any
+        other devices' tunnels alone.
+        """
+        try:
+            host, port = TUNNELD_DEFAULT_ADDRESS
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.get(f"http://{host}:{port}/cancel", params={"udid": udid})
+        except Exception:
+            pass
+
     async def _request_tunneld_wifi_tunnel(self) -> bool:
         """Ask tunneld to establish a Wi-Fi tunnel for our target device.
 
@@ -523,12 +563,27 @@ class DeviceSession:
                 if ios_major < 17:
                     await rsd.close()
                 else:
-                    dvt = await self._stack.enter_async_context(DvtProvider(rsd))
-                    self.loc_sim = await self._stack.enter_async_context(LocationSimulation(dvt))
-                    self.udid = rsd.udid
-                    self.product = f"{rsd.product_type} / iOS {rsd.product_version}"
-                    self.path = "dvt"
-                    return
+                    if await self._enter_dvt(rsd):
+                        return
+                    # Ghost tunnel recovery: enter failed even though
+                    # tunneld listed the rsd. Cancel that stale tunnel,
+                    # ask for a fresh Wi-Fi one, retry once.
+                    print("  ↳ DVT entry failed; cancelling ghost tunnel + requesting Wi-Fi…")
+                    await self._cancel_tunneld_for(rsd.udid)
+                    if await self._request_tunneld_wifi_tunnel():
+                        await asyncio.sleep(2)
+                        try:
+                            rsds2 = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
+                        except Exception:
+                            rsds2 = []
+                        if TARGET_UDID:
+                            rsds2 = [r for r in rsds2 if r.udid == TARGET_UDID]
+                        if rsds2:
+                            rsd2 = rsds2[0]
+                            for extra in rsds2[1:]:
+                                await extra.close()
+                            if await self._enter_dvt(rsd2):
+                                return
 
         # Legacy path (iOS ≤16). Three transports to try, in priority
         # order — we want to end up on a Wi-Fi lockdown session so that
