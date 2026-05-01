@@ -6,9 +6,11 @@
 # Only needed if you use the multi-device targets (start-ipad / start-iphone).
 # The single-device `make start` target auto-detects without any config.
 
-IPAD_UDID   :=
-IPHONE_UDID :=
+IPAD_UDID    :=
+IPHONE_UDID  :=
+IPHONE2_UDID :=
 
 # Optional: override default ports
-# IPAD_PORT   := 7766
-# IPHONE_PORT := 7767
+# IPAD_PORT    := 7766
+# IPHONE_PORT  := 7767
+# IPHONE2_PORT := 7770

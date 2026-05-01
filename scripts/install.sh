@@ -117,6 +117,19 @@ if [ "$COUNT" != "0" ]; then
         else
             warn "[$SHORT] pair record 存檔失敗"
         fi
+
+        # Step 4: developer mode — only matters if it's currently off; if so,
+        # reveal the toggle in the device's Settings UI (user still has to
+        # tap it manually — Apple does not let us flip it programmatically).
+        DEV_STATUS=$(pymobiledevice3 amfi developer-mode-status --udid "$UDID" 2>/dev/null || echo "unknown")
+        if [ "$DEV_STATUS" = "true" ]; then
+            ok "[$SHORT] developer mode 已開啟"
+        elif [ "$DEV_STATUS" = "false" ]; then
+            pymobiledevice3 amfi reveal-developer-mode --udid "$UDID" >/dev/null 2>&1 || true
+            warn "[$SHORT] developer mode 未開 — 設定選項已 reveal，請手動到「設定 → 隱私權與安全性 → 開發者模式」打開"
+        else
+            warn "[$SHORT] developer mode 狀態未知"
+        fi
     done <<< "$UDIDS"
 fi
 
