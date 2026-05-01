@@ -452,6 +452,37 @@ class DeviceSession:
                 else:
                     raise
 
+    async def _request_tunneld_wifi_tunnel(self) -> bool:
+        """Ask tunneld to establish a Wi-Fi tunnel for our target device.
+
+        tunneld v9.x is passive — it doesn't auto-fail-over from USB to Wi-Fi
+        when USB drops, it just becomes empty. Without this nudge, an iOS 17+
+        device on Wi-Fi is unreachable for the DVT path even though pair
+        record + Bonjour broadcast are fine. We hit /start-tunnel?udid=&ip=
+        with the cached last_wifi_host to force tunneld to bring it up.
+        """
+        if not TARGET_UDID:
+            return False
+        wifi_host = _load_wifi_host()
+        if not wifi_host:
+            return False
+        try:
+            host, port = TUNNELD_DEFAULT_ADDRESS
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"http://{host}:{port}/start-tunnel",
+                    params={"udid": TARGET_UDID, "ip": wifi_host},
+                )
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            if data.get("interface") or data.get("address") or data.get("tunnel-port"):
+                print(f"  ↳ tunneld brought up Wi-Fi tunnel via {wifi_host}")
+                return True
+        except Exception as e:
+            print(f"  ↳ tunneld /start-tunnel failed: {e}")
+        return False
+
     async def connect(self) -> None:
         # Try iOS 17+ tunneld first — if tunneld is up, a device is tunnelled
         # and we take the DVT fast path.
@@ -461,6 +492,17 @@ class DeviceSession:
         except Exception:
             # tunneld not running / unreachable — fine, fall through to legacy
             pass
+
+        # tunneld is empty (USB just unplugged, or never had a tunnel). If we
+        # remember a Wi-Fi address for our target device, ask tunneld to bring
+        # one up before we give up on the DVT path.
+        if not rsds:
+            if await self._request_tunneld_wifi_tunnel():
+                await asyncio.sleep(2)  # give tunneld a moment to register
+                try:
+                    rsds = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
+                except Exception:
+                    pass
 
         if rsds:
             # Filter by TARGET_UDID if set (multi-device mode)
