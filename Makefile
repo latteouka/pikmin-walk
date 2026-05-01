@@ -1,4 +1,5 @@
-.PHONY: install start stop restart status tunnel kill-tunnel clear logs help \
+.PHONY: install setup-sudo remove-sudo start stop restart status tunnel \
+        kill-tunnel clear logs help \
         start-ipad start-iphone start-iphone2 stop-ipad stop-iphone stop-iphone2 \
         restart-ipad restart-iphone restart-iphone2 mount-iphone-ddi mount-iphone2-ddi \
         status-all list-devices
@@ -25,6 +26,17 @@ help: ## Show this help
 
 install: ## One-time setup on macOS (uv + pymobiledevice3 + 裝置 checklist)
 	@bash scripts/install.sh
+
+setup-sudo: ## Install sudoers rule so tunneld no longer prompts for password
+	@bash scripts/setup_sudo.sh
+
+remove-sudo: ## Remove the sudoers rule installed by setup-sudo
+	@if [ -f /etc/sudoers.d/pikmin-walk-tunneld ]; then \
+		sudo rm /etc/sudoers.d/pikmin-walk-tunneld && \
+		echo "✓ removed /etc/sudoers.d/pikmin-walk-tunneld"; \
+	else \
+		echo "  (沒有 setup-sudo 過，沒事可做)"; \
+	fi
 
 # ─── Legacy single-device targets (use auto-detect) ──────────────────────
 
