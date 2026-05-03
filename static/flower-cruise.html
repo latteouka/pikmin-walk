@@ -202,6 +202,7 @@
     </div>
 
     <div class="btn-row">
+      <button id="btnInOrder">↕ 按照順序</button>
       <button id="btnPreview">🗺 預覽路線</button>
       <button id="btnStart" class="primary" disabled>▶ 開始巡航</button>
       <button id="btnPause" disabled>⏸ 暫停</button>
@@ -257,6 +258,7 @@ const $speed = document.getElementById('speed');
 const $speedVal = document.getElementById('speedVal');
 const $preview = document.getElementById('previewInfo');
 const $btnPreview = document.getElementById('btnPreview');
+const $btnInOrder = document.getElementById('btnInOrder');
 const $btnStart = document.getElementById('btnStart');
 const $btnStop = document.getElementById('btnStop');
 const $btnPause = document.getElementById('btnPause');
@@ -305,10 +307,12 @@ function updateParseInfo() {
   if (parsedFlowers.length === 0) {
     $parseInfo.textContent = '尚未解析';
     $btnPreview.disabled = true;
+    $btnInOrder.disabled = true;
     return;
   }
   $parseInfo.textContent = `已解析 ${parsedFlowers.length} 朵花`;
   $btnPreview.disabled = parsedFlowers.length < 2;
+  $btnInOrder.disabled = parsedFlowers.length < 2;
   // Render markers immediately so user sees what was parsed
   renderFlowerMarkers(parsedFlowers, false);
   if (parsedFlowers.length > 0) {
@@ -416,6 +420,28 @@ function startStatsTimer() {
   }, 1000);
 }
 
+$btnInOrder.addEventListener('click', () => {
+  if (parsedFlowers.length < 2) {
+    setStatus('至少需要 2 朵花', 'error');
+    return;
+  }
+  const ordered = parsedFlowers.slice();
+  previewedRoute = {
+    ordered,
+    distance_km: pathDistM(ordered) / 1000,
+    count: ordered.length,
+  };
+  startFromIndex = 0;
+  $startFrom.max = String(Math.max(1, ordered.length - 1));
+  $startFrom.value = '1';
+  $totalFlowers.textContent = String(ordered.length);
+  $startFromRow.style.display = 'flex';
+  map.fitBounds(L.latLngBounds(ordered).pad(0.15));
+  redrawForStart();
+  $preview.textContent = `按輸入順序：${ordered.length} 朵 / ${(pathDistM(ordered)/1000).toFixed(2)} km`;
+  $preview.className = 'preview-info';
+});
+
 $btnPreview.addEventListener('click', async () => {
   if (parsedFlowers.length < 2) {
     setStatus('至少需要 2 朵花', 'error');
@@ -484,7 +510,7 @@ function handleMessage(m) {
       updateDevice(m.lat, m.lon);
       break;
     case 'loop_walk_started':
-      $btnStart.disabled = true; $btnStop.disabled = false; $btnPause.disabled = false; $btnPreview.disabled = true;
+      $btnStart.disabled = true; $btnStop.disabled = false; $btnPause.disabled = false; $btnPreview.disabled = true; $btnInOrder.disabled = true;
       isPaused = false; $btnPause.textContent = '⏸ 暫停';
       document.getElementById('statsRow').style.display = 'grid';
       resetStats(); startStatsTimer();
@@ -516,7 +542,7 @@ function handleMessage(m) {
     case 'stopped':
     case 'done':
       setStatus(m.type === 'done' ? '完成' : '已停止');
-      $btnStart.disabled = false; $btnStop.disabled = true; $btnPause.disabled = true; $btnPreview.disabled = false;
+      $btnStart.disabled = false; $btnStop.disabled = true; $btnPause.disabled = true; $btnPreview.disabled = false; $btnInOrder.disabled = parsedFlowers.length < 2;
       isPaused = false; $btnPause.textContent = '⏸ 暫停';
       if (statsTimer) clearInterval(statsTimer);
       break;
