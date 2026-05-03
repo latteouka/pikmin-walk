@@ -46,10 +46,14 @@ start: tunnel ## Start server (auto-detect device, port 7766)
 	else \
 		cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && \
 		nohup uv run server.py > /tmp/pikmin-server.log 2>&1 & \
-		sleep 5; \
-		lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
-			echo "✓ server up → http://localhost:$(IPAD_PORT)" || \
-			echo "✗ server failed — check: cat /tmp/pikmin-server.log"; \
+		for i in $$(seq 1 15); do \
+			sleep 1; \
+			if lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+				echo "✓ server up → http://localhost:$(IPAD_PORT) ($${i}s)"; \
+				exit 0; \
+			fi; \
+		done; \
+		echo "✗ server failed after 15s — check: cat /tmp/pikmin-server.log"; \
 	fi
 
 stop: ## Stop all servers
@@ -68,10 +72,14 @@ start-ipad: tunnel ## Start iPad server on port 7766
 		cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && \
 		nohup uv run server.py --port $(IPAD_PORT) $(IPAD_UDID_FLAG) \
 			> /tmp/pikmin-ipad.log 2>&1 & \
-		sleep 5; \
-		lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
-			echo "✓ iPad → http://localhost:$(IPAD_PORT)" || \
-			echo "✗ failed — cat /tmp/pikmin-ipad.log"; \
+		for i in $$(seq 1 15); do \
+			sleep 1; \
+			if lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+				echo "✓ iPad → http://localhost:$(IPAD_PORT) ($${i}s)"; \
+				exit 0; \
+			fi; \
+		done; \
+		echo "✗ failed after 15s — cat /tmp/pikmin-ipad.log"; \
 	fi
 
 mount-iphone-ddi: ## Mount DeveloperDiskImage on iPhone (needed after reboot)
@@ -87,10 +95,14 @@ start-iphone: mount-iphone-ddi ## Start iPhone server on port 7767 (auto-mounts 
 		cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && \
 		nohup uv run server.py --port $(IPHONE_PORT) $(IPHONE_UDID_FLAG) \
 			> /tmp/pikmin-iphone.log 2>&1 & \
-		sleep 5; \
-		lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
-			echo "✓ iPhone → http://localhost:$(IPHONE_PORT)" || \
-			echo "✗ failed — cat /tmp/pikmin-iphone.log"; \
+		for i in $$(seq 1 15); do \
+			sleep 1; \
+			if lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+				echo "✓ iPhone → http://localhost:$(IPHONE_PORT) ($${i}s)"; \
+				exit 0; \
+			fi; \
+		done; \
+		echo "✗ failed after 15s — cat /tmp/pikmin-iphone.log"; \
 	fi
 
 mount-iphone2-ddi: ## Mount DDI on iPhone 2 (needed after reboot)
@@ -106,10 +118,14 @@ start-iphone2: mount-iphone2-ddi ## Start iPhone-2 server on port 7770 (auto-mou
 		cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && \
 		nohup uv run server.py --port $(IPHONE2_PORT) $(IPHONE2_UDID_FLAG) \
 			> /tmp/pikmin-iphone2.log 2>&1 & \
-		sleep 5; \
-		lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
-			echo "✓ iPhone-2 → http://localhost:$(IPHONE2_PORT)" || \
-			echo "✗ failed — cat /tmp/pikmin-iphone2.log"; \
+		for i in $$(seq 1 15); do \
+			sleep 1; \
+			if lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+				echo "✓ iPhone-2 → http://localhost:$(IPHONE2_PORT) ($${i}s)"; \
+				exit 0; \
+			fi; \
+		done; \
+		echo "✗ failed after 15s — cat /tmp/pikmin-iphone2.log"; \
 	fi
 
 stop-ipad: ## Stop iPad server only
