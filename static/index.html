@@ -61,7 +61,7 @@
       flex: 1 1 auto;
       min-height: 0;
       display: grid;
-      grid-template-columns: 1fr 420px;
+      grid-template-columns: 1fr 360px 300px;
     }
     #map { height: 100%; background: #ddd; }
     .leaflet-container { font-family: inherit; }
@@ -296,7 +296,6 @@
       display: flex;
       flex-direction: column;
       gap: 3px;
-      max-height: 160px;
       overflow-y: auto;
     }
     #bookmarks:empty { display: none; }
@@ -332,6 +331,37 @@
       flex-shrink: 0;
     }
     #bookmarks li button:hover { color: var(--danger); background: transparent; }
+
+    #bookmarks-pane {
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    #bookmarks-pane > .pane-header {
+      flex: 0 0 auto;
+      padding: 16px 16px 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    #bookmarks-pane > .pane-header h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 10px 0;
+      letter-spacing: 0.08em;
+    }
+    #bookmarks-pane > #bookmarks {
+      flex: 1 1 auto;
+      min-height: 0;          /* allow flex shrinking */
+      max-height: none;       /* override the 160px cap */
+      overflow-y: auto;
+      padding: 8px;
+      margin: 0;
+      background: transparent;
+    }
 
     .layer-control {
       position: absolute; top: 10px; right: 10px; z-index: 1000;
@@ -411,8 +441,6 @@
         <input type="text" id="bookmarkName" placeholder="書籤名稱（自訂）" />
         <button id="bookmarkAdd" title="加入書籤">★ 存</button>
       </div>
-      <div class="hint">先在上方輸入地名/座標按 GO 瞬移，再取個名字按 ★ 存書籤</div>
-      <ul id="bookmarks"></ul>
     </div>
 
     <select id="profile" style="display:none;"></select>
@@ -464,6 +492,15 @@
       border-radius: 8px; color: var(--accent); text-decoration: none;
       font-size: 14px; font-weight: 500;
     ">🚶 道路漫步模式 →</a>
+  </aside>
+  <aside id="bookmarks-pane">
+    <div class="pane-header">
+      <h2>★ 書籤</h2>
+      <div class="hint" style="margin-bottom: 10px;">先在中間欄輸入地名/座標按 GO，再取個名字按 ★ 存</div>
+      <!-- Category filter UI placeholder; populated in Task 6 -->
+      <div id="bookmarks-controls"></div>
+    </div>
+    <ul id="bookmarks"></ul>
   </aside>
 </div>
 
