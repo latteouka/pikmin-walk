@@ -439,7 +439,8 @@
       </div>
       <div class="jump-row" style="margin-top: 4px;">
         <input type="text" id="bookmarkName" placeholder="書籤名稱（自訂）" />
-        <button id="bookmarkAdd" title="加入書籤">★ 存</button>
+        <select id="bookmarkAddCategory" style="flex:0 0 auto;width:auto;min-width:80px;"></select>
+        <button id="bookmarkAdd" title="加入書籤" style="flex:0 0 auto;width:auto;padding:10px 14px;">★ 存</button>
       </div>
     </div>
 
@@ -497,8 +498,16 @@
     <div class="pane-header">
       <h2>★ 書籤</h2>
       <div class="hint" style="margin-bottom: 10px;">先在中間欄輸入地名/座標按 GO，再取個名字按 ★ 存</div>
-      <!-- Category filter UI placeholder; populated in Task 6 -->
-      <div id="bookmarks-controls"></div>
+      <div id="bookmarks-controls" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="categoryFilter" style="flex:1;">
+            <option value="__all__">全部</option>
+          </select>
+          <button id="categoryAdd" title="新增分類" style="width:auto;padding:8px 10px;flex:0 0 auto;">+</button>
+          <button id="categoryManageToggle" title="管理分類" style="width:auto;padding:8px 10px;flex:0 0 auto;">✏️</button>
+        </div>
+        <div id="categoryManagePanel" style="display:none;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;max-height:200px;overflow-y:auto;"></div>
+      </div>
     </div>
     <ul id="bookmarks"></ul>
   </aside>
@@ -796,43 +805,129 @@ document.getElementById('jumpInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); handleJumpInput(); }
 });
 
+// Temporary stub; replaced by real localStorage helper in Task 8
+const storage = { get: (_k, fb = '') => fb, set: () => {} };
+
 //
-// ---- Bookmarks ----
+// ---- Bookmarks state + UI ----
 //
-function renderBookmarks(list) {
+const DEFAULT_CATEGORY = '未分類';
+const ALL_FILTER = '__all__';
+let bookmarkState = { bookmarks: [], categories: [DEFAULT_CATEGORY] };
+
+function applyBookmarkState(state) {
+  bookmarkState = state;
+  refreshCategoryFilter();
+  refreshAddCategoryDropdown();
+  refreshManagePanel();
+  renderBookmarks();
+}
+
+function refreshCategoryFilter() {
+  const sel = document.getElementById('categoryFilter');
+  const prev = sel.value || storage.get('pikmin.bookmarkCategoryFilter', ALL_FILTER);
+  sel.replaceChildren();
+  const all = document.createElement('option');
+  all.value = ALL_FILTER; all.textContent = `全部 (${bookmarkState.bookmarks.length})`;
+  sel.append(all);
+  bookmarkState.categories.forEach(cat => {
+    const count = bookmarkState.bookmarks.filter(b => b.category === cat).length;
+    const opt = document.createElement('option');
+    opt.value = cat; opt.textContent = `${cat} (${count})`;
+    sel.append(opt);
+  });
+  // Restore selection if still valid
+  if (prev === ALL_FILTER || bookmarkState.categories.includes(prev)) {
+    sel.value = prev;
+  } else {
+    sel.value = ALL_FILTER;
+  }
+}
+
+function refreshAddCategoryDropdown() {
+  const sel = document.getElementById('bookmarkAddCategory');
+  const prev = sel.value || storage.get('pikmin.lastSelectedCategory', DEFAULT_CATEGORY);
+  sel.replaceChildren();
+  bookmarkState.categories.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat; opt.textContent = cat;
+    sel.append(opt);
+  });
+  sel.value = bookmarkState.categories.includes(prev) ? prev : DEFAULT_CATEGORY;
+}
+
+function refreshManagePanel() {
+  const panel = document.getElementById('categoryManagePanel');
+  panel.replaceChildren();
+  bookmarkState.categories.forEach(cat => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 6px;';
+    const label = document.createElement('span');
+    label.textContent = cat;
+    label.style.cssText = 'flex:1;color:var(--text);';
+    const renameBtn = document.createElement('button');
+    renameBtn.textContent = '✏️';
+    renameBtn.style.cssText = 'width:auto;padding:4px 8px;font-size:12px;';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '🗑️';
+    deleteBtn.style.cssText = 'width:auto;padding:4px 8px;font-size:12px;';
+    if (cat === DEFAULT_CATEGORY) {
+      renameBtn.disabled = true;
+      deleteBtn.disabled = true;
+      renameBtn.title = '系統分類，無法修改';
+      deleteBtn.title = '系統分類，無法修改';
+    } else {
+      renameBtn.addEventListener('click', () => renameCategory(cat));
+      deleteBtn.addEventListener('click', () => deleteCategory(cat));
+    }
+    row.append(label, renameBtn, deleteBtn);
+    panel.append(row);
+  });
+}
+
+function renderBookmarks() {
   const ul = document.getElementById('bookmarks');
   ul.replaceChildren();
-  list.forEach((bk, i) => {
+  const filter = document.getElementById('categoryFilter').value || ALL_FILTER;
+
+  bookmarkState.bookmarks.forEach((bk, i) => {
+    if (filter !== ALL_FILTER && bk.category !== filter) return;
+
     const li = document.createElement('li');
+    li.dataset.originalIdx = String(i);
     li.title = `${bk.lat.toFixed(5)}, ${bk.lon.toFixed(5)}`;
 
-    // Editable name field — click to focus/edit, blur saves
     const nameEl = document.createElement('input');
     nameEl.type = 'text';
     nameEl.className = 'bk-name';
     nameEl.value = bk.name;
-    nameEl.addEventListener('focus', (e) => e.stopPropagation());
-    nameEl.addEventListener('click', (e) => e.stopPropagation());
+    nameEl.addEventListener('focus', e => e.stopPropagation());
+    nameEl.addEventListener('click', e => e.stopPropagation());
     nameEl.addEventListener('blur', () => {
       const newName = nameEl.value.trim();
-      if (newName && newName !== bk.name) {
-        renameBookmark(i, newName);
-      }
+      if (newName && newName !== bk.name) renameBookmark(i, newName);
     });
-    nameEl.addEventListener('keydown', (e) => {
+    nameEl.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
     });
 
-    const coords = document.createElement('span');
-    coords.className = 'bk-coords';
-    coords.textContent = `${bk.lat.toFixed(4)}, ${bk.lon.toFixed(4)}`;
+    const catSel = document.createElement('select');
+    catSel.style.cssText = 'flex:0 0 auto;width:auto;padding:2px 4px;font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--muted);';
+    bookmarkState.categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat; opt.textContent = cat;
+      catSel.append(opt);
+    });
+    catSel.value = bk.category || DEFAULT_CATEGORY;
+    catSel.addEventListener('click', e => e.stopPropagation());
+    catSel.addEventListener('change', () => recategorizeBookmark(i, catSel.value));
 
     const rm = document.createElement('button');
     rm.textContent = '✕';
     rm.title = '刪除書籤';
-    rm.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(i); });
+    rm.addEventListener('click', e => { e.stopPropagation(); deleteBookmark(i); });
 
-    li.append(nameEl, coords, rm);
+    li.append(nameEl, catSel, rm);
     li.addEventListener('click', () => {
       document.getElementById('jumpInput').value = bk.name;
       teleportTo(bk.lat, bk.lon);
@@ -841,55 +936,57 @@ function renderBookmarks(list) {
     });
     ul.append(li);
   });
+
+  if (!ul.children.length) {
+    const empty = document.createElement('li');
+    empty.style.cssText = 'color:var(--muted);text-align:center;padding:16px;background:transparent;border:1px dashed var(--border);font-family:inherit;';
+    empty.textContent = filter === ALL_FILTER ? '尚無書籤' : `「${filter}」分類目前沒有書籤`;
+    ul.append(empty);
+  }
 }
 
 function loadBookmarks() {
   fetch('/api/bookmarks')
     .then(r => r.json())
-    .then(renderBookmarks)
+    .then(applyBookmarkState)
     .catch(() => {});
 }
 
 async function addBookmark() {
   const jumpInput = document.getElementById('jumpInput').value.trim();
   const nameInput = document.getElementById('bookmarkName').value.trim();
+  const category = document.getElementById('bookmarkAddCategory').value || DEFAULT_CATEGORY;
   if (!jumpInput) { setStatus('先在「地名或 lat, lon」輸入位置再按 ★', 'error'); return; }
 
-  // Parse coords from jumpInput
   let lat, lon;
   const m = jumpInput.match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
   if (m) {
-    lat = parseFloat(m[1]);
-    lon = parseFloat(m[2]);
+    lat = parseFloat(m[1]); lon = parseFloat(m[2]);
   } else {
-    // Geocode to get coords
     try {
       const url = 'https://nominatim.openstreetmap.org/search'
         + `?format=json&limit=1&q=${encodeURIComponent(jumpInput)}`;
       const res = await fetch(url);
       const hits = await res.json();
       if (!hits.length) { setStatus(`找不到「${jumpInput}」`, 'error'); return; }
-      lat = parseFloat(hits[0].lat);
-      lon = parseFloat(hits[0].lon);
+      lat = parseFloat(hits[0].lat); lon = parseFloat(hits[0].lon);
     } catch (err) {
       setStatus(`geocode 失敗: ${err.message}`, 'error');
       return;
     }
   }
 
-  // Name priority: user-typed name > jump input text > raw coords
   const name = nameInput || jumpInput;
-
   try {
     const res = await fetch('/api/bookmarks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, lat, lon }),
+      body: JSON.stringify({ name, lat, lon, category }),
     });
-    const list = await res.json();
-    renderBookmarks(list);
+    const state = await res.json();
+    applyBookmarkState(state);
     document.getElementById('bookmarkName').value = '';
-    setStatus(`★ 已加入書籤「${name}」`, 'done');
+    setStatus(`★ 已加入書籤「${name}」(${category})`, 'done');
   } catch (err) {
     setStatus(`書籤儲存失敗: ${err.message}`, 'error');
   }
@@ -902,25 +999,99 @@ async function renameBookmark(idx, newName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName }),
     });
-    const list = await res.json();
-    renderBookmarks(list);
+    applyBookmarkState(await res.json());
     setStatus(`書籤已改名為「${newName}」`, 'done');
   } catch (err) {
     setStatus(`改名失敗: ${err.message}`, 'error');
   }
 }
 
+async function recategorizeBookmark(idx, category) {
+  try {
+    const res = await fetch(`/api/bookmarks/${idx}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    applyBookmarkState(await res.json());
+  } catch (err) {
+    setStatus(`分類更新失敗: ${err.message}`, 'error');
+  }
+}
+
 async function deleteBookmark(idx) {
   try {
     const res = await fetch(`/api/bookmarks/${idx}`, { method: 'DELETE' });
-    const list = await res.json();
-    renderBookmarks(list);
+    applyBookmarkState(await res.json());
+  } catch (err) {
+    setStatus(`刪除失敗: ${err.message}`, 'error');
+  }
+}
+
+async function addCategory() {
+  const name = (prompt('新分類名稱：') || '').trim();
+  if (!name) return;
+  if (bookmarkState.categories.includes(name)) {
+    setStatus(`分類「${name}」已存在`, 'error'); return;
+  }
+  try {
+    const res = await fetch('/api/bookmark-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    applyBookmarkState(await res.json());
+    setStatus(`已新增分類「${name}」`, 'done');
+  } catch (err) {
+    setStatus(`新增失敗: ${err.message}`, 'error');
+  }
+}
+
+async function renameCategory(oldName) {
+  const newName = (prompt(`重新命名「${oldName}」為：`, oldName) || '').trim();
+  if (!newName || newName === oldName) return;
+  try {
+    const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(oldName)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    applyBookmarkState(await res.json());
+    setStatus(`分類「${oldName}」已改名為「${newName}」`, 'done');
+  } catch (err) {
+    setStatus(`改名失敗: ${err.message}`, 'error');
+  }
+}
+
+async function deleteCategory(name) {
+  if (!confirm(`確定要刪除分類「${name}」？\n屬於這個分類的書籤會自動歸到「${DEFAULT_CATEGORY}」。`)) return;
+  try {
+    const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    applyBookmarkState(await res.json());
+    setStatus(`已刪除分類「${name}」`, 'done');
   } catch (err) {
     setStatus(`刪除失敗: ${err.message}`, 'error');
   }
 }
 
 document.getElementById('bookmarkAdd').addEventListener('click', addBookmark);
+document.getElementById('categoryAdd').addEventListener('click', addCategory);
+document.getElementById('categoryManageToggle').addEventListener('click', () => {
+  const panel = document.getElementById('categoryManagePanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('categoryFilter').addEventListener('change', () => {
+  storage.set('pikmin.bookmarkCategoryFilter', document.getElementById('categoryFilter').value);
+  renderBookmarks();
+});
+document.getElementById('bookmarkAddCategory').addEventListener('change', () => {
+  storage.set('pikmin.lastSelectedCategory', document.getElementById('bookmarkAddCategory').value);
+});
+
 loadBookmarks();
 
 //
