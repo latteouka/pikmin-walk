@@ -5,6 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pikmin Walker</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            border: 'hsl(217.2 32.6% 17.5%)',
+            input: 'hsl(217.2 32.6% 17.5%)',
+            ring: 'hsl(212.7 26.8% 83.9%)',
+            background: 'hsl(222.2 84% 4.9%)',
+            foreground: 'hsl(210 40% 98%)',
+            primary: 'hsl(210 40% 98%)',
+            'primary-foreground': 'hsl(222.2 47.4% 11.2%)',
+            muted: 'hsl(217.2 32.6% 17.5%)',
+            'muted-foreground': 'hsl(215 20.2% 65.1%)',
+            accent: 'hsl(217.2 32.6% 17.5%)',
+            'accent-foreground': 'hsl(210 40% 98%)',
+            destructive: 'hsl(0 62.8% 30.6%)',
+            'destructive-foreground': 'hsl(210 40% 98%)',
+            card: 'hsl(222.2 84% 4.9%)',
+            'card-foreground': 'hsl(210 40% 98%)',
+          },
+        },
+      },
+    };
+  </script>
   <style>
     :root {
       --bg: #0f172a;
@@ -26,8 +53,16 @@
       color: var(--text);
       background: var(--bg);
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
     }
-    #app { display: grid; grid-template-columns: 1fr 420px; height: 100vh; }
+    #app {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 420px;
+    }
     #map { height: 100%; background: #ddd; }
     .leaflet-container { font-family: inherit; }
 
@@ -315,7 +350,41 @@
     }
   </style>
 </head>
-<body>
+<body class="dark">
+<nav class="h-12 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
+  <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
+    <span class="text-blue-500">●</span>
+    <span>Pikmin Walker</span>
+  </a>
+  <div class="flex items-center gap-1" id="nav-links">
+    <a href="/" data-page="home"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🌱 漫步種花
+    </a>
+    <a href="/flower-cruise" data-page="flower"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🌸 花朵巡航
+    </a>
+    <a href="/walk" data-page="walk"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🚶 道路漫步
+    </a>
+  </div>
+</nav>
+<script>
+  // Highlight the current nav link based on current pathname
+  (function() {
+    const path = location.pathname;
+    const map = { '/': 'home', '/flower-cruise': 'flower', '/walk': 'walk' };
+    const active = map[path] || '';
+    document.querySelectorAll('#nav-links a').forEach(a => {
+      if (a.dataset.page === active) {
+        a.classList.remove('text-muted-foreground');
+        a.classList.add('bg-accent', 'text-foreground');
+      }
+    });
+  })();
+</script>
 <div id="app">
   <div style="position:relative;">
     <div id="map"></div>
