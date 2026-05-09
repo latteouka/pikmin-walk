@@ -122,6 +122,27 @@
     }
     .dwell-row input[type="number"]:focus { outline: none; border-color: var(--flower); }
 
+    .mode-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+      background: var(--panel-solid); border: 1px solid var(--border);
+      border-radius: 8px; padding: 3px;
+    }
+    .mode-row label {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 6px 8px; border-radius: 6px;
+      font-size: 12px; color: var(--muted);
+      cursor: pointer; user-select: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-row input[type="radio"] { display: none; }
+    .mode-row input[type="radio"]:checked + span {
+      color: var(--text); font-weight: 600;
+    }
+    .mode-row label:has(input:checked) {
+      background: var(--flower);
+    }
+    .mode-row label:has(input:checked) span { color: white; }
+
     .preview-info {
       padding: 10px 14px; background: var(--panel-solid);
       border: 1px solid var(--border); border-radius: 8px;
@@ -218,12 +239,23 @@
       <span>朵開始（共 <span id="totalFlowers">0</span> 朵；前面跳過）</span>
     </div>
 
+    <div class="mode-row">
+      <label>
+        <input type="radio" name="cruiseMode" value="harvest" checked>
+        <span>🌸 採花（走過即收）</span>
+      </label>
+      <label>
+        <input type="radio" name="cruiseMode" value="plant">
+        <span>🌱 種花（每朵繞圈）</span>
+      </label>
+    </div>
+
     <div class="loop-row">
       <input type="checkbox" id="loopChk">
       <label for="loopChk">跑完後循環（預設關閉）</label>
     </div>
 
-    <div class="dwell-row">
+    <div class="dwell-row" id="dwellRow" style="display:none;">
       <div class="field">
         <span class="field-label">每朵繞圈秒數</span>
         <input type="number" id="dwellEach" min="0" max="120" value="8" step="1">
@@ -308,6 +340,18 @@ const $totalFlowers = document.getElementById('totalFlowers');
 const $loopChk = document.getElementById('loopChk');
 const $dwellEach = document.getElementById('dwellEach');
 const $dwellLast = document.getElementById('dwellLast');
+const $dwellRow = document.getElementById('dwellRow');
+const $modeRadios = document.querySelectorAll('input[name="cruiseMode"]');
+
+function getCruiseMode() {
+  for (const r of $modeRadios) if (r.checked) return r.value;
+  return 'harvest';
+}
+function syncDwellVisibility() {
+  $dwellRow.style.display = getCruiseMode() === 'plant' ? 'grid' : 'none';
+}
+$modeRadios.forEach(r => r.addEventListener('change', syncDwellVisibility));
+syncDwellVisibility();
 
 let parsedFlowers = [];      // [[lat, lon], ...] from textarea
 let previewedRoute = null;   // { ordered, distance_km, count } from server
@@ -600,13 +644,14 @@ $btnStart.addEventListener('click', () => {
   const route = previewedRoute.ordered.slice(startFromIndex);
   if (route.length < 2) return;
   // One-shot: walk the (possibly sliced) ordered flowers and stop at the last.
+  const isPlant = getCruiseMode() === 'plant';
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),
     route,
     loop: $loopChk.checked,
-    dwell_each_s: parseInt($dwellEach.value) || 0,
-    dwell_last_s: parseInt($dwellLast.value) || 0,
+    dwell_each_s: isPlant ? (parseInt($dwellEach.value) || 0) : 0,
+    dwell_last_s: isPlant ? (parseInt($dwellLast.value) || 0) : 0,
     dwell_radius_m: 2.5,
   }));
 });
