@@ -116,7 +116,50 @@ def _migrate_to_shared() -> None:
         print(f"✓ migrated {len(shared.get('bookmarks', []))} bookmarks to shared.json")
 
 
+DEFAULT_CATEGORY = "未分類"
+
+
+def _migrate_bookmark_categories() -> None:
+    """Idempotent: ensure every bookmark has a `category` and shared.json has `bookmark_categories`.
+
+    - Bookmarks without `category` → set to DEFAULT_CATEGORY ("未分類").
+    - Build categories list as: [DEFAULT_CATEGORY, ...sorted(other categories used by bookmarks)].
+    - Existing categories in shared.json are preserved (union with bookmark-derived set).
+    - DEFAULT_CATEGORY is always first in the list.
+    """
+    shared = _read_shared()
+    bookmarks = shared.get("bookmarks", [])
+    if not bookmarks and "bookmark_categories" not in shared:
+        # Nothing to migrate; first launch or no bookmarks yet.
+        if SHARED_FILE.exists():
+            shared.setdefault("bookmark_categories", [DEFAULT_CATEGORY])
+            _write_shared(shared)
+        return
+
+    changed = False
+    used_categories: set[str] = set()
+    for bk in bookmarks:
+        if "category" not in bk or not bk.get("category"):
+            bk["category"] = DEFAULT_CATEGORY
+            changed = True
+        used_categories.add(bk["category"])
+
+    existing = shared.get("bookmark_categories", [])
+    # Union: existing categories ∪ used_categories ∪ {DEFAULT_CATEGORY}
+    union = set(existing) | used_categories | {DEFAULT_CATEGORY}
+    others = sorted(union - {DEFAULT_CATEGORY})
+    new_list = [DEFAULT_CATEGORY, *others]
+    if new_list != existing:
+        shared["bookmark_categories"] = new_list
+        changed = True
+
+    if changed:
+        _write_shared(shared)
+        print(f"✓ migrated {len(bookmarks)} bookmarks; categories: {new_list}")
+
+
 _migrate_to_shared()
+_migrate_bookmark_categories()
 
 
 def _load_position() -> "tuple[float, float] | None":
