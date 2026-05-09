@@ -727,8 +727,27 @@ async def config_post(request):
     return JSONResponse({"ok": True})
 
 
+def _bookmarks_response(shared: dict) -> dict:
+    """Shape returned by every bookmark endpoint: {bookmarks, categories}."""
+    return {
+        "bookmarks": shared.get("bookmarks", []),
+        "categories": shared.get("bookmark_categories", [DEFAULT_CATEGORY]),
+    }
+
+
+def _normalize_category(shared: dict, raw: str | None) -> str:
+    """Return a category that exists in bookmark_categories. Unknown → DEFAULT_CATEGORY."""
+    if not raw:
+        return DEFAULT_CATEGORY
+    name = str(raw).strip()
+    if not name:
+        return DEFAULT_CATEGORY
+    cats = shared.get("bookmark_categories", [DEFAULT_CATEGORY])
+    return name if name in cats else DEFAULT_CATEGORY
+
+
 async def bookmarks_get(request):
-    return JSONResponse(_read_shared().get("bookmarks", []))
+    return JSONResponse(_bookmarks_response(_read_shared()))
 
 
 async def bookmarks_post(request):
@@ -742,10 +761,11 @@ async def bookmarks_post(request):
     if not name:
         name = f"{lat:.4f}, {lon:.4f}"
     shared = _read_shared()
+    category = _normalize_category(shared, body.get("category"))
     bk = shared.setdefault("bookmarks", [])
-    bk.append({"name": name, "lat": lat, "lon": lon})
+    bk.append({"name": name, "lat": lat, "lon": lon, "category": category})
     _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def bookmarks_patch(request):
@@ -760,8 +780,10 @@ async def bookmarks_patch(request):
             bk[idx]["lat"] = float(body["lat"])
         if "lon" in body:
             bk[idx]["lon"] = float(body["lon"])
+        if "category" in body:
+            bk[idx]["category"] = _normalize_category(shared, body["category"])
         _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def bookmarks_delete(request):
@@ -771,7 +793,7 @@ async def bookmarks_delete(request):
     if 0 <= idx < len(bk):
         bk.pop(idx)
         _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def preview_loop(request):
