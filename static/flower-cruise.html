@@ -123,7 +123,7 @@
     .dwell-row input[type="number"]:focus { outline: none; border-color: var(--flower); }
 
     .mode-row {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
       background: var(--panel-solid); border: 1px solid var(--border);
       border-radius: 8px; padding: 3px;
     }
@@ -242,11 +242,15 @@
     <div class="mode-row">
       <label>
         <input type="radio" name="cruiseMode" value="harvest" checked>
-        <span>🌸 採花（走過即收）</span>
+        <span>🌸 採花</span>
       </label>
       <label>
         <input type="radio" name="cruiseMode" value="plant">
-        <span>🌱 種花（每朵繞圈）</span>
+        <span>🌱 種花</span>
+      </label>
+      <label>
+        <input type="radio" name="cruiseMode" value="quick_harvest">
+        <span>⚡ 快速採花</span>
       </label>
     </div>
 
@@ -644,15 +648,18 @@ $btnStart.addEventListener('click', () => {
   const route = previewedRoute.ordered.slice(startFromIndex);
   if (route.length < 2) return;
   // One-shot: walk the (possibly sliced) ordered flowers and stop at the last.
-  const isPlant = getCruiseMode() === 'plant';
+  const mode = getCruiseMode();
+  const isPlant = mode === 'plant';
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),
     route,
     loop: $loopChk.checked,
+    mode,
     dwell_each_s: isPlant ? (parseInt($dwellEach.value) || 0) : 0,
     dwell_last_s: isPlant ? (parseInt($dwellLast.value) || 0) : 0,
     dwell_radius_m: 2.5,
+    quick_dwell_s: 10,
   }));
 });
 

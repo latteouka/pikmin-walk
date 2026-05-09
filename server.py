@@ -1311,9 +1311,11 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     raw_route = msg.get("route")
     speed_kmh = float(msg.get("speed_kmh", 19))
     loop_mode = bool(msg.get("loop", True))
+    mode = str(msg.get("mode", "harvest"))  # harvest | plant | quick_harvest
     dwell_each_s = float(msg.get("dwell_each_s", 0))
     dwell_last_s = float(msg.get("dwell_last_s", 0))
     dwell_radius_m = float(msg.get("dwell_radius_m", 2.5))
+    quick_dwell_s = float(msg.get("quick_dwell_s", 5))
 
     if not raw_route or len(raw_route) < 2:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
@@ -1375,6 +1377,24 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
             while True:
                 lap += 1
                 await ws.send_json({"type": "loop_lap", "lap": lap})
+
+                if mode == "quick_harvest":
+                    # Teleport to each flower in turn, briefly orbit so the
+                    # GPS isn't perfectly stationary between teleports, then
+                    # jump to the next.
+                    for target in route:
+                        await session.set_location(*target)
+                        await ws.send_json({
+                            "type": "tick",
+                            "lat": target[0],
+                            "lon": target[1],
+                            "step_m": 0.0,
+                            "note": "teleport",
+                        })
+                        await orbit_at_flower(target, quick_dwell_s)
+                    if not loop_mode:
+                        break
+                    continue
 
                 pos = route[0]
                 await session.set_location(*pos)
