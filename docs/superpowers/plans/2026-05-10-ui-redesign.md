@@ -245,9 +245,9 @@ async def bookmarks_delete(request):
 - [ ] **Step 2.2: Start the server**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
-curl -s http://localhost:5066/ -o /dev/null -w "%{http_code}\n"
+curl -s http://localhost:7766/ -o /dev/null -w "%{http_code}\n"
 ```
 
 Expected: `200`. (If `make dev` is not the right target, run `cat Makefile | grep -E '^[a-z-]+:' | head` to find it. Common alternatives: `make run`, `python server.py`.)
@@ -255,9 +255,9 @@ Expected: `200`. (If `make dev` is not the right target, run `cat Makefile | gre
 - [ ] **Step 2.3: GET returns new shape**
 
 ```bash
-curl -s http://localhost:5066/api/bookmarks | jq 'keys'
-curl -s http://localhost:5066/api/bookmarks | jq '.bookmarks[0]'
-curl -s http://localhost:5066/api/bookmarks | jq '.categories'
+curl -s http://localhost:7766/api/bookmarks | jq 'keys'
+curl -s http://localhost:7766/api/bookmarks | jq '.bookmarks[0]'
+curl -s http://localhost:7766/api/bookmarks | jq '.categories'
 ```
 
 Expected:
@@ -268,7 +268,7 @@ Expected:
 - [ ] **Step 2.4: POST a test bookmark with category**
 
 ```bash
-curl -sX POST http://localhost:5066/api/bookmarks \
+curl -sX POST http://localhost:7766/api/bookmarks \
   -H 'Content-Type: application/json' \
   -d '{"name":"_TEST_PLAN_TASK2","lat":35.6,"lon":139.7,"category":"未分類"}' \
   | jq '.bookmarks[-1]'
@@ -279,8 +279,8 @@ Expected: returned object has `name=_TEST_PLAN_TASK2`, `category=未分類`.
 - [ ] **Step 2.5: PATCH it (test invalid category falls back to default)**
 
 ```bash
-LAST_IDX=$(curl -s http://localhost:5066/api/bookmarks | jq '.bookmarks | length - 1')
-curl -sX PATCH http://localhost:5066/api/bookmarks/$LAST_IDX \
+LAST_IDX=$(curl -s http://localhost:7766/api/bookmarks | jq '.bookmarks | length - 1')
+curl -sX PATCH http://localhost:7766/api/bookmarks/$LAST_IDX \
   -H 'Content-Type: application/json' \
   -d '{"category":"NotARealCategory"}' \
   | jq ".bookmarks[$LAST_IDX].category"
@@ -291,8 +291,8 @@ Expected: `"未分類"` (invalid category was normalized to default).
 - [ ] **Step 2.6: DELETE the test bookmark**
 
 ```bash
-LAST_IDX=$(curl -s http://localhost:5066/api/bookmarks | jq '.bookmarks | length - 1')
-curl -sX DELETE http://localhost:5066/api/bookmarks/$LAST_IDX | jq '.bookmarks[-1].name'
+LAST_IDX=$(curl -s http://localhost:7766/api/bookmarks | jq '.bookmarks | length - 1')
+curl -sX DELETE http://localhost:7766/api/bookmarks/$LAST_IDX | jq '.bookmarks[-1].name'
 ```
 
 Expected: any name **other than** `"_TEST_PLAN_TASK2"`.
@@ -393,9 +393,9 @@ Find the `Route("/api/bookmarks/{idx:int}", bookmarks_delete, methods=["DELETE"]
 ```bash
 pkill -f "python.*server.py" || true
 sleep 1
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
-curl -s http://localhost:5066/ -o /dev/null -w "%{http_code}\n"
+curl -s http://localhost:7766/ -o /dev/null -w "%{http_code}\n"
 ```
 
 Expected: `200`.
@@ -403,7 +403,7 @@ Expected: `200`.
 - [ ] **Step 3.4: POST creates a category**
 
 ```bash
-curl -sX POST http://localhost:5066/api/bookmark-categories \
+curl -sX POST http://localhost:7766/api/bookmark-categories \
   -H 'Content-Type: application/json' \
   -d '{"name":"_TEST_PLAN_CAT"}' \
   | jq '.categories'
@@ -414,7 +414,7 @@ Expected: array contains `"_TEST_PLAN_CAT"`.
 - [ ] **Step 3.5: PATCH renames the category**
 
 ```bash
-curl -sX PATCH "http://localhost:5066/api/bookmark-categories/_TEST_PLAN_CAT" \
+curl -sX PATCH "http://localhost:7766/api/bookmark-categories/_TEST_PLAN_CAT" \
   -H 'Content-Type: application/json' \
   -d '{"name":"_TEST_PLAN_CAT2"}' \
   | jq '.categories'
@@ -425,7 +425,7 @@ Expected: `"_TEST_PLAN_CAT"` is gone, `"_TEST_PLAN_CAT2"` is present.
 - [ ] **Step 3.6: PATCH on 「未分類」 returns 400**
 
 ```bash
-curl -sX PATCH "http://localhost:5066/api/bookmark-categories/%E6%9C%AA%E5%88%86%E9%A1%9E" \
+curl -sX PATCH "http://localhost:7766/api/bookmark-categories/%E6%9C%AA%E5%88%86%E9%A1%9E" \
   -H 'Content-Type: application/json' \
   -d '{"name":"X"}' \
   -w "\n%{http_code}\n"
@@ -436,7 +436,7 @@ Expected: ends with `400`, JSON contains `cannot rename 未分類`.
 - [ ] **Step 3.7: DELETE on 「未分類」 returns 400**
 
 ```bash
-curl -sX DELETE "http://localhost:5066/api/bookmark-categories/%E6%9C%AA%E5%88%86%E9%A1%9E" \
+curl -sX DELETE "http://localhost:7766/api/bookmark-categories/%E6%9C%AA%E5%88%86%E9%A1%9E" \
   -w "\n%{http_code}\n"
 ```
 
@@ -446,15 +446,15 @@ Expected: ends with `400`, JSON contains `cannot delete 未分類`.
 
 ```bash
 # Create a bookmark with category=_TEST_PLAN_CAT2
-curl -sX POST http://localhost:5066/api/bookmarks \
+curl -sX POST http://localhost:7766/api/bookmarks \
   -H 'Content-Type: application/json' \
   -d '{"name":"_TEST_PLAN_BK","lat":1,"lon":2,"category":"_TEST_PLAN_CAT2"}' > /dev/null
 
 # Delete the category
-curl -sX DELETE "http://localhost:5066/api/bookmark-categories/_TEST_PLAN_CAT2" | jq '.categories'
+curl -sX DELETE "http://localhost:7766/api/bookmark-categories/_TEST_PLAN_CAT2" | jq '.categories'
 
 # Verify the bookmark fell back to 未分類
-curl -s http://localhost:5066/api/bookmarks \
+curl -s http://localhost:7766/api/bookmarks \
   | jq '.bookmarks[] | select(.name == "_TEST_PLAN_BK") | .category'
 ```
 
@@ -465,9 +465,9 @@ Expected:
 - [ ] **Step 3.9: Clean up the test bookmark**
 
 ```bash
-TEST_IDX=$(curl -s http://localhost:5066/api/bookmarks \
+TEST_IDX=$(curl -s http://localhost:7766/api/bookmarks \
   | jq '.bookmarks | map(.name == "_TEST_PLAN_BK") | index(true)')
-curl -sX DELETE "http://localhost:5066/api/bookmarks/$TEST_IDX" > /dev/null
+curl -sX DELETE "http://localhost:7766/api/bookmarks/$TEST_IDX" > /dev/null
 ```
 
 - [ ] **Step 3.10: Stop the server**
@@ -640,11 +640,11 @@ grep -nE '<body|<div id="app"|grid-template' static/walk.html | head
 - [ ] **Step 4.5: Smoke test all three pages**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 for path in / /flower-cruise /walk; do
-  curl -s "http://localhost:5066$path" | grep -q 'cdn.tailwindcss.com' && echo "$path: tailwind OK" || echo "$path: MISSING tailwind"
-  curl -s "http://localhost:5066$path" | grep -q 'data-page="home"' && echo "$path: navbar OK" || echo "$path: MISSING navbar"
+  curl -s "http://localhost:7766$path" | grep -q 'cdn.tailwindcss.com' && echo "$path: tailwind OK" || echo "$path: MISSING tailwind"
+  curl -s "http://localhost:7766$path" | grep -q 'data-page="home"' && echo "$path: navbar OK" || echo "$path: MISSING navbar"
 done
 ```
 
@@ -653,9 +653,9 @@ Expected: all six lines say `OK`.
 - [ ] **Step 4.6: Visual smoke via Playwright MCP**
 
 Use the Playwright MCP (`mcp__plugin_playwright_playwright__browser_navigate`) to visit each of:
-- `http://localhost:5066/` → take screenshot, verify navbar shows `🌱 漫步種花` highlighted
-- `http://localhost:5066/flower-cruise` → screenshot, verify `🌸 花朵巡航` highlighted
-- `http://localhost:5066/walk` → screenshot, verify `🚶 道路漫步` highlighted
+- `http://localhost:7766/` → take screenshot, verify navbar shows `🌱 漫步種花` highlighted
+- `http://localhost:7766/flower-cruise` → screenshot, verify `🌸 花朵巡航` highlighted
+- `http://localhost:7766/walk` → screenshot, verify `🚶 道路漫步` highlighted
 
 Visually confirm:
 - Navbar is sticky at top with dark background + bottom border
@@ -756,11 +756,11 @@ In the HTML body:
 - [ ] **Step 5.4: Smoke test the layout**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
-Use Playwright MCP to navigate to `http://localhost:5066/` and take a screenshot. Visually verify:
+Use Playwright MCP to navigate to `http://localhost:7766/` and take a screenshot. Visually verify:
 - Three columns: map (left, widest), middle controls (~360px), bookmarks (~300px right)
 - Bookmarks list is tall — fills the right column except for the header area at top
 - No horizontal scroll
@@ -1134,11 +1134,11 @@ loadBookmarks();
 - [ ] **Step 6.4: Smoke test category UI**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
-Use Playwright MCP at `http://localhost:5066/`:
+Use Playwright MCP at `http://localhost:7766/`:
 1. Verify category filter dropdown shows existing categories with counts
 2. Click `+`, enter `_TEST_CAT_TASK6`, confirm — dropdown updates
 3. Click `✏️` — manage panel toggles open, `_TEST_CAT_TASK6` has working buttons, `未分類` has disabled buttons
@@ -1204,7 +1204,7 @@ Same as 7.2 for `static/walk.html`.
 - [ ] **Step 7.4: Smoke test all three pages still load and bookmarks work**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
@@ -1303,13 +1303,13 @@ Place it just before the closing `</script>` of the **main inline script** (the 
 - [ ] **Step 8.4: Smoke test**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
 Use Playwright MCP:
-1. Visit `http://localhost:5066/`. In `#jumpInput` type `Tokyo Tower`. Reload. Verify `Tokyo Tower` is still there.
-2. Visit `http://localhost:5066/flower-cruise`. In `#flowersText` paste a couple of lines like `35.0,139.0\n35.1,139.1`. Reload. Verify text is still there.
+1. Visit `http://localhost:7766/`. In `#jumpInput` type `Tokyo Tower`. Reload. Verify `Tokyo Tower` is still there.
+2. Visit `http://localhost:7766/flower-cruise`. In `#flowersText` paste a couple of lines like `35.0,139.0\n35.1,139.1`. Reload. Verify text is still there.
 3. On the home page, change category filter to a non-default. Reload. Verify the filter dropdown selection persists.
 4. On the home page, change the "add bookmark" category dropdown. Reload. Verify it persists.
 
@@ -1344,7 +1344,7 @@ Deliverable: visual upgrade only.
 - [ ] **Step 9.2: Manual visual review**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
@@ -1374,7 +1374,7 @@ git commit -m "feat(ui): shadcn visual sweep across index/flower-cruise/walk"
 - [ ] **Step 10.1: Start server**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
@@ -1499,7 +1499,7 @@ If any item in Task 10 was ❌ or ⏳, list the failures here, fix each one with
 - [ ] **Step W.1: Final smoke test all three pages**
 
 ```bash
-make dev > /tmp/pikmin-server.log 2>&1 &
+make start > /tmp/pikmin-server.log 2>&1
 sleep 3
 ```
 
