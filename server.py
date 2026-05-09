@@ -796,6 +796,60 @@ async def bookmarks_delete(request):
     return JSONResponse(_bookmarks_response(shared))
 
 
+async def categories_post(request):
+    """Create a new category."""
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.setdefault("bookmark_categories", [DEFAULT_CATEGORY])
+    if name not in cats:
+        cats.append(name)
+        _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
+
+
+async def categories_patch(request):
+    """Rename a category. Updates every bookmark using the old name. DEFAULT_CATEGORY cannot be renamed."""
+    old_name = request.path_params["name"]
+    body = await request.json()
+    new_name = str(body.get("name", "")).strip()
+    if not new_name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    if old_name == DEFAULT_CATEGORY:
+        return JSONResponse({"error": f"cannot rename {DEFAULT_CATEGORY}"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.get("bookmark_categories", [])
+    if old_name not in cats:
+        return JSONResponse({"error": "category not found"}, status_code=404)
+    if new_name in cats and new_name != old_name:
+        return JSONResponse({"error": "name already exists"}, status_code=409)
+    cats[cats.index(old_name)] = new_name
+    for bk in shared.get("bookmarks", []):
+        if bk.get("category") == old_name:
+            bk["category"] = new_name
+    _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
+
+
+async def categories_delete(request):
+    """Delete a category. Bookmarks using it fall back to DEFAULT_CATEGORY. DEFAULT_CATEGORY cannot be deleted."""
+    name = request.path_params["name"]
+    if name == DEFAULT_CATEGORY:
+        return JSONResponse({"error": f"cannot delete {DEFAULT_CATEGORY}"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.get("bookmark_categories", [])
+    if name not in cats:
+        return JSONResponse({"error": "category not found"}, status_code=404)
+    cats.remove(name)
+    for bk in shared.get("bookmarks", []):
+        if bk.get("category") == name:
+            bk["category"] = DEFAULT_CATEGORY
+    _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
+
+
 async def preview_loop(request):
     """Generate loop waypoints + OSRM route for preview (no walking yet)."""
     body = await request.json()
@@ -1606,6 +1660,9 @@ app = Starlette(
         Route("/api/bookmarks", bookmarks_post, methods=["POST"]),
         Route("/api/bookmarks/{idx:int}", bookmarks_patch, methods=["PATCH"]),
         Route("/api/bookmarks/{idx:int}", bookmarks_delete, methods=["DELETE"]),
+        Route("/api/bookmark-categories", categories_post, methods=["POST"]),
+        Route("/api/bookmark-categories/{name}", categories_patch, methods=["PATCH"]),
+        Route("/api/bookmark-categories/{name}", categories_delete, methods=["DELETE"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ],
