@@ -100,6 +100,28 @@
     }
     .start-from-row input:focus { outline: none; border-color: var(--flower); }
 
+    .loop-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted);
+    }
+    .loop-row input[type="checkbox"] { accent-color: var(--flower); cursor: pointer; }
+    .loop-row label { cursor: pointer; user-select: none; }
+
+    .dwell-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      font-size: 12px; color: var(--muted);
+    }
+    .dwell-row .field { display: flex; flex-direction: column; gap: 4px; }
+    .dwell-row .field-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .dwell-row input[type="number"] {
+      padding: 6px 8px; background: var(--panel-solid);
+      border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+      font-family: ui-monospace, monospace; font-size: 13px;
+    }
+    .dwell-row input[type="number"]:focus { outline: none; border-color: var(--flower); }
+
     .preview-info {
       padding: 10px 14px; background: var(--panel-solid);
       border: 1px solid var(--border); border-radius: 8px;
@@ -196,6 +218,22 @@
       <span>朵開始（共 <span id="totalFlowers">0</span> 朵；前面跳過）</span>
     </div>
 
+    <div class="loop-row">
+      <input type="checkbox" id="loopChk">
+      <label for="loopChk">跑完後循環（預設關閉）</label>
+    </div>
+
+    <div class="dwell-row">
+      <div class="field">
+        <span class="field-label">每朵繞圈秒數</span>
+        <input type="number" id="dwellEach" min="0" max="120" value="8" step="1">
+      </div>
+      <div class="field">
+        <span class="field-label">最後一朵久留秒數</span>
+        <input type="number" id="dwellLast" min="0" max="600" value="60" step="5">
+      </div>
+    </div>
+
     <div class="stats-row" id="statsRow" style="display:none;">
       <div class="stat"><div class="num" id="statDist">0.0</div><div class="label">km</div></div>
       <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
@@ -267,6 +305,9 @@ const $deviceStatus = document.getElementById('deviceStatus');
 const $startFromRow = document.getElementById('startFromRow');
 const $startFrom = document.getElementById('startFrom');
 const $totalFlowers = document.getElementById('totalFlowers');
+const $loopChk = document.getElementById('loopChk');
+const $dwellEach = document.getElementById('dwellEach');
+const $dwellLast = document.getElementById('dwellLast');
 
 let parsedFlowers = [];      // [[lat, lon], ...] from textarea
 let previewedRoute = null;   // { ordered, distance_km, count } from server
@@ -563,7 +604,10 @@ $btnStart.addEventListener('click', () => {
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),
     route,
-    loop: false,
+    loop: $loopChk.checked,
+    dwell_each_s: parseInt($dwellEach.value) || 0,
+    dwell_last_s: parseInt($dwellLast.value) || 0,
+    dwell_radius_m: 2.5,
   }));
 });
 

@@ -1311,6 +1311,9 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     raw_route = msg.get("route")
     speed_kmh = float(msg.get("speed_kmh", 19))
     loop_mode = bool(msg.get("loop", True))
+    dwell_each_s = float(msg.get("dwell_each_s", 0))
+    dwell_last_s = float(msg.get("dwell_last_s", 0))
+    dwell_radius_m = float(msg.get("dwell_radius_m", 2.5))
 
     if not raw_route or len(raw_route) < 2:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
@@ -1325,7 +1328,36 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
     async def runner() -> None:
         rng = random.Random()
-        from pikmin_walk import haversine_m, step_toward, jitter_position
+        from pikmin_walk import haversine_m, step_toward, jitter_position, circle_walk, PROFILES
+
+        async def orbit_at_flower(center: tuple[float, float], duration_s: float) -> None:
+            """繞 center 走小圓圈 duration_s 秒（Pikmin Bloom 需要持續位移才會種花）。"""
+            if duration_s <= 0 or dwell_radius_m <= 0:
+                return
+            profile = PROFILES["circle"]
+            iterator = circle_walk(
+                center=center,
+                profile=profile,
+                rng=rng,
+                get_radius=lambda: dwell_radius_m,
+                get_speed_kmh=lambda: profile.nominal_kmh,
+            )
+            elapsed = 0.0
+            while elapsed < duration_s:
+                tick = next(iterator)
+                lat, lon = tick.position
+                await session.set_location(lat, lon)
+                await ws.send_json({
+                    "type": "tick",
+                    "lat": lat,
+                    "lon": lon,
+                    "step_m": 0.0,
+                    "note": "orbit",
+                })
+                await asyncio.sleep(profile.tick_s)
+                elapsed += profile.tick_s
+                while session.paused:
+                    await asyncio.sleep(0.5)
 
         try:
             loop_dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
@@ -1346,8 +1378,13 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
                 pos = route[0]
                 await session.set_location(*pos)
+                # First flower also gets a dwell — gives Pikmin Bloom time to
+                # register the lap-start location before we walk away.
+                await orbit_at_flower(pos, dwell_each_s)
 
-                for target in route[1:]:
+                targets = route[1:]
+                for i, target in enumerate(targets):
+                    is_last = (i == len(targets) - 1)
                     while haversine_m(pos, target) > 1.0:
                         # Read live speed each tick so slider changes apply instantly
                         cur_speed_mps = session.live_speed_kmh * 1000 / 3600
@@ -1365,6 +1402,11 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                         await asyncio.sleep(tick_s)
                         while session.paused:
                             await asyncio.sleep(0.5)
+
+                    # Reached this flower — orbit it before moving on.
+                    # Last flower of the route gets the longer "久留" dwell.
+                    pos = target
+                    await orbit_at_flower(target, dwell_last_s if is_last else dwell_each_s)
 
                 if not loop_mode:
                     break
