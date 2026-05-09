@@ -53,16 +53,22 @@ status: approved
      1fr             ~360px         ~300px
 ```
 
-CSS Grid:
+Layout：navbar 是 `<body>` 直接子節點、與 `#app` 並排；`<body>` 用 flex column 讓 navbar 拿自己的 48px、`#app` 拿剩餘高度。`#app` 內部則是三欄 grid：
 
 ```css
-#app {
-  display: grid;
-  grid-template-rows: 48px 1fr;
-  grid-template-columns: 1fr 360px 300px;
+body {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  overflow: hidden;
 }
-nav { grid-column: 1 / -1; }
+nav { /* sticky 48px tall, see §4 */ }
+#app {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 360px 300px;
+}
 ```
 
 書籤欄內部結構:
@@ -105,10 +111,11 @@ Sticky `top: 0`，z-index 高於 Leaflet 控制項。
 
 ## 5. 書籤欄與分類
 
-### 資料結構（`state.json`）
+### 資料結構（`shared.json`，同檔案內 `google_maps_api_key` 不動）
 
 ```json
 {
+  "google_maps_api_key": "...",
   "bookmarks": [
     {"name": "札幌駅", "lat": 43.0686, "lon": 141.3507, "category": "日本"}
   ],
@@ -118,9 +125,12 @@ Sticky `top: 0`，z-index 高於 Leaflet 控制項。
 
 ### Migration
 
-`server.py` 啟動時 (`load_state`)：若 bookmark 沒有 `category` 欄位 → 補填 `"未分類"`；
-若沒有 `bookmark_categories` 欄位 → 預設 `["未分類"]`，並 union 進所有 bookmark 的
-existing category（防 state.json 被手動編輯）。
+新增一個 `_migrate_bookmark_categories()` helper，啟動時呼叫一次：
+- 讀 `shared.json`
+- 若 bookmark 沒有 `category` 欄位 → 補填 `"未分類"`
+- 收集所有 bookmark 的 unique category，加上預設的 `"未分類"` → 寫入 `bookmark_categories`
+- 若 `bookmark_categories` 已存在 → union 進去現有清單，**保持「未分類」永遠在第一個**
+- 寫回 `shared.json`
 
 ### API
 
@@ -246,7 +256,7 @@ Component utility class（手寫，不抽 .css 檔；inline 在 HTML 裡）:
 - **Tailwind CDN dev mode 警告**：CDN 版本 console 會出現 production 警告。本工具是 local 自用，可接受。
 - **`/api/bookmarks` response shape breaking**：所有 client（三頁都會 fetch 嗎？）需同步更新。實作時要 grep 所有 `fetch('/api/bookmarks')` 確認。
 - **`"未分類"` 的特殊地位**：禁刪、是預設、無法重命名。UI 要在管理面板隱藏這三個動作。
-- **state.json 同時被多個 page 寫**：現狀沒 lock，並發寫會有 race。本次不處理（現狀已有此問題，非本次造成）。
+- **shared.json 同時被多個 page 寫**：現狀沒 lock，並發寫會有 race。本次不處理（現狀已有此問題，非本次造成）。
 - **書籤 indexed by position**：API 用 `idx`，當分類 filter 套用時前端要把 filter 後的 visible index 映射回原始 index。實作時用 `data-original-idx` 屬性記住。
 
 ## 10. 驗收
@@ -260,7 +270,7 @@ Component utility class（手寫，不抽 .css 檔；inline 在 HTML 裡）:
 - [ ] 重整首頁，jumpInput 仍保留上次值
 - [ ] 重整花朵巡航，對應 input 仍保留上次值
 - [ ] 重整後 filter 維持上次選擇
-- [ ] 既有 `state.json`（沒有 `category` 欄位）能正常 load 且自動補 `"未分類"`
+- [ ] 既有 `shared.json`（沒有 `category` 欄位）能正常 load 且自動補 `"未分類"`
 - [ ] 視覺風格貼近 shadcn（小圓角、subtle border、focus ring）
 
 ## 11. 後續實作步驟
