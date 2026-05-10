@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import subprocess
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,7 @@ STATIC_DIR = HERE / "static"
 # Per-device state (last_position, last_wifi_host): state-<udid>.json
 # Shared state (bookmarks, google_maps_api_key): shared.json
 TARGET_UDID: str | None = None
+RUNTIME_PORT: int = 7766
 STATE_FILE: Path = HERE / "state.json"
 SHARED_FILE: Path = HERE / "shared.json"
 
@@ -116,7 +118,50 @@ def _migrate_to_shared() -> None:
         print(f"✓ migrated {len(shared.get('bookmarks', []))} bookmarks to shared.json")
 
 
+DEFAULT_CATEGORY = "未分類"
+
+
+def _migrate_bookmark_categories() -> None:
+    """Idempotent: ensure every bookmark has a `category` and shared.json has `bookmark_categories`.
+
+    - Bookmarks without `category` → set to DEFAULT_CATEGORY ("未分類").
+    - Build categories list as: [DEFAULT_CATEGORY, ...sorted(other categories used by bookmarks)].
+    - Existing categories in shared.json are preserved (union with bookmark-derived set).
+    - DEFAULT_CATEGORY is always first in the list.
+    """
+    shared = _read_shared()
+    bookmarks = shared.get("bookmarks", [])
+    if not bookmarks and "bookmark_categories" not in shared:
+        # Nothing to migrate; first launch or no bookmarks yet.
+        if SHARED_FILE.exists():
+            shared.setdefault("bookmark_categories", [DEFAULT_CATEGORY])
+            _write_shared(shared)
+        return
+
+    changed = False
+    used_categories: set[str] = set()
+    for bk in bookmarks:
+        if "category" not in bk or not bk.get("category"):
+            bk["category"] = DEFAULT_CATEGORY
+            changed = True
+        used_categories.add(bk["category"])
+
+    existing = shared.get("bookmark_categories", [])
+    # Union: existing categories ∪ used_categories ∪ {DEFAULT_CATEGORY}
+    union = set(existing) | used_categories | {DEFAULT_CATEGORY}
+    others = sorted(union - {DEFAULT_CATEGORY})
+    new_list = [DEFAULT_CATEGORY, *others]
+    if new_list != existing:
+        shared["bookmark_categories"] = new_list
+        changed = True
+
+    if changed:
+        _write_shared(shared)
+        print(f"✓ migrated {len(bookmarks)} bookmarks; categories: {new_list}")
+
+
 _migrate_to_shared()
+_migrate_bookmark_categories()
 
 
 def _load_position() -> "tuple[float, float] | None":
@@ -684,8 +729,27 @@ async def config_post(request):
     return JSONResponse({"ok": True})
 
 
+def _bookmarks_response(shared: dict) -> dict:
+    """Shape returned by every bookmark endpoint: {bookmarks, categories}."""
+    return {
+        "bookmarks": shared.get("bookmarks", []),
+        "categories": shared.get("bookmark_categories", [DEFAULT_CATEGORY]),
+    }
+
+
+def _normalize_category(shared: dict, raw: str | None) -> str:
+    """Return a category that exists in bookmark_categories. Unknown → DEFAULT_CATEGORY."""
+    if not raw:
+        return DEFAULT_CATEGORY
+    name = str(raw).strip()
+    if not name:
+        return DEFAULT_CATEGORY
+    cats = shared.get("bookmark_categories", [DEFAULT_CATEGORY])
+    return name if name in cats else DEFAULT_CATEGORY
+
+
 async def bookmarks_get(request):
-    return JSONResponse(_read_shared().get("bookmarks", []))
+    return JSONResponse(_bookmarks_response(_read_shared()))
 
 
 async def bookmarks_post(request):
@@ -699,10 +763,11 @@ async def bookmarks_post(request):
     if not name:
         name = f"{lat:.4f}, {lon:.4f}"
     shared = _read_shared()
+    category = _normalize_category(shared, body.get("category"))
     bk = shared.setdefault("bookmarks", [])
-    bk.append({"name": name, "lat": lat, "lon": lon})
+    bk.append({"name": name, "lat": lat, "lon": lon, "category": category})
     _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def bookmarks_patch(request):
@@ -717,8 +782,10 @@ async def bookmarks_patch(request):
             bk[idx]["lat"] = float(body["lat"])
         if "lon" in body:
             bk[idx]["lon"] = float(body["lon"])
+        if "category" in body:
+            bk[idx]["category"] = _normalize_category(shared, body["category"])
         _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def bookmarks_delete(request):
@@ -728,7 +795,95 @@ async def bookmarks_delete(request):
     if 0 <= idx < len(bk):
         bk.pop(idx)
         _write_shared(shared)
-    return JSONResponse(bk)
+    return JSONResponse(_bookmarks_response(shared))
+
+
+async def categories_post(request):
+    """Create a new category."""
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.setdefault("bookmark_categories", [DEFAULT_CATEGORY])
+    if name not in cats:
+        cats.append(name)
+        _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
+
+
+async def categories_patch(request):
+    """Rename a category. Updates every bookmark using the old name. DEFAULT_CATEGORY cannot be renamed."""
+    old_name = request.path_params["name"]
+    body = await request.json()
+    new_name = str(body.get("name", "")).strip()
+    if not new_name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    if old_name == DEFAULT_CATEGORY:
+        return JSONResponse({"error": f"cannot rename {DEFAULT_CATEGORY}"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.get("bookmark_categories", [])
+    if old_name not in cats:
+        return JSONResponse({"error": "category not found"}, status_code=404)
+    if new_name in cats and new_name != old_name:
+        return JSONResponse({"error": "name already exists"}, status_code=409)
+    cats[cats.index(old_name)] = new_name
+    for bk in shared.get("bookmarks", []):
+        if bk.get("category") == old_name:
+            bk["category"] = new_name
+    _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
+
+
+async def admin_restart(request):
+    """Trigger `make restart-{ipad|iphone}` via a detached shell.
+
+    The server kills itself when the make target runs `stop-*`, then the
+    detached shell continues and runs `start-*` to bring it back. The endpoint
+    returns 200 immediately so the client can poll the port for the new server.
+    """
+    # Reject cross-origin requests (mild CSRF guard for a localhost tool)
+    origin = request.headers.get("origin", "")
+    host = request.headers.get("host", "")
+    if origin and host and not origin.endswith(host):
+        return JSONResponse({"error": "cross-origin not allowed"}, status_code=403)
+
+    if RUNTIME_PORT == 7766:
+        target = "restart-ipad"
+    elif RUNTIME_PORT == 7767:
+        target = "restart-iphone"
+    else:
+        target = "restart"
+
+    # Detached shell: `setsid` so it survives our death; sleep gives us time
+    # to finish responding before make stop-* kills us.
+    cmd = (
+        f'(sleep 1 && cd "{HERE}" && /usr/bin/make {target} '
+        f'> /tmp/pikmin-restart.log 2>&1) &'
+    )
+    subprocess.Popen(
+        cmd, shell=True, start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=str(HERE),
+    )
+    return JSONResponse({"ok": True, "target": target, "port": RUNTIME_PORT})
+
+
+async def categories_delete(request):
+    """Delete a category. Bookmarks using it fall back to DEFAULT_CATEGORY. DEFAULT_CATEGORY cannot be deleted."""
+    name = request.path_params["name"]
+    if name == DEFAULT_CATEGORY:
+        return JSONResponse({"error": f"cannot delete {DEFAULT_CATEGORY}"}, status_code=400)
+    shared = _read_shared()
+    cats = shared.get("bookmark_categories", [])
+    if name not in cats:
+        return JSONResponse({"error": "category not found"}, status_code=404)
+    cats.remove(name)
+    for bk in shared.get("bookmarks", []):
+        if bk.get("category") == name:
+            bk["category"] = DEFAULT_CATEGORY
+    _write_shared(shared)
+    return JSONResponse(_bookmarks_response(shared))
 
 
 async def preview_loop(request):
@@ -1541,6 +1696,10 @@ app = Starlette(
         Route("/api/bookmarks", bookmarks_post, methods=["POST"]),
         Route("/api/bookmarks/{idx:int}", bookmarks_patch, methods=["PATCH"]),
         Route("/api/bookmarks/{idx:int}", bookmarks_delete, methods=["DELETE"]),
+        Route("/api/bookmark-categories", categories_post, methods=["POST"]),
+        Route("/api/bookmark-categories/{name}", categories_patch, methods=["PATCH"]),
+        Route("/api/bookmark-categories/{name}", categories_delete, methods=["DELETE"]),
+        Route("/api/admin/restart", admin_restart, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ],
@@ -1558,6 +1717,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TARGET_UDID = args.udid
+    RUNTIME_PORT = args.port
     IDLE_MINUTES = args.idle_minutes
     if TARGET_UDID:
         # Separate state file per device so bookmarks/last_position don't collide

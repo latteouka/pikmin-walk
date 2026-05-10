@@ -5,6 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pikmin Walker</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            border: 'hsl(217.2 32.6% 17.5%)',
+            input: 'hsl(217.2 32.6% 17.5%)',
+            ring: 'hsl(212.7 26.8% 83.9%)',
+            background: 'hsl(222.2 84% 4.9%)',
+            foreground: 'hsl(210 40% 98%)',
+            primary: 'hsl(210 40% 98%)',
+            'primary-foreground': 'hsl(222.2 47.4% 11.2%)',
+            muted: 'hsl(217.2 32.6% 17.5%)',
+            'muted-foreground': 'hsl(215 20.2% 65.1%)',
+            accent: 'hsl(217.2 32.6% 17.5%)',
+            'accent-foreground': 'hsl(210 40% 98%)',
+            destructive: 'hsl(0 62.8% 30.6%)',
+            'destructive-foreground': 'hsl(210 40% 98%)',
+            card: 'hsl(222.2 84% 4.9%)',
+            'card-foreground': 'hsl(210 40% 98%)',
+          },
+        },
+      },
+    };
+  </script>
   <style>
     :root {
       --bg: #0f172a;
@@ -26,8 +53,16 @@
       color: var(--text);
       background: var(--bg);
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
     }
-    #app { display: grid; grid-template-columns: 1fr 420px; height: 100vh; }
+    #app {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 360px 300px;
+    }
     #map { height: 100%; background: #ddd; }
     .leaflet-container { font-family: inherit; }
 
@@ -51,7 +86,10 @@
       margin: 0;
       letter-spacing: 0.08em;
     }
-    select, button {
+    /* ID-prefixed so we don't pollute the navbar's <button>/<a> styling
+       and we still beat Tailwind CDN preflight inside the side panes. */
+    #side select, #side button, #side input,
+    #bookmarks-pane select, #bookmarks-pane button, #bookmarks-pane input {
       width: 100%;
       padding: 10px 12px;
       font-size: 14px;
@@ -63,28 +101,32 @@
       outline: none;
       transition: all 0.15s;
     }
-    select:hover, select:focus { border-color: var(--accent); }
-    button { cursor: pointer; font-weight: 500; }
-    button:hover:not(:disabled) { background: var(--border); }
-    button.primary {
+    #side select:hover, #side select:focus,
+    #bookmarks-pane select:hover, #bookmarks-pane select:focus { border-color: var(--accent); }
+    #side button, #bookmarks-pane button { cursor: pointer; font-weight: 500; }
+    #side button:hover:not(:disabled),
+    #bookmarks-pane button:hover:not(:disabled) { background: var(--border); }
+    #side button.primary, #bookmarks-pane button.primary {
       background: var(--accent);
       border-color: var(--accent);
       color: white;
     }
-    button.primary:hover:not(:disabled) {
+    #side button.primary:hover:not(:disabled),
+    #bookmarks-pane button.primary:hover:not(:disabled) {
       background: var(--accent-hover);
       border-color: var(--accent-hover);
     }
-    button.danger {
+    #side button.danger, #bookmarks-pane button.danger {
       background: var(--danger);
       border-color: var(--danger);
       color: white;
     }
-    button.danger:hover:not(:disabled) {
+    #side button.danger:hover:not(:disabled),
+    #bookmarks-pane button.danger:hover:not(:disabled) {
       background: var(--danger-hover);
       border-color: var(--danger-hover);
     }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #side button:disabled, #bookmarks-pane button:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .btn-row { display: flex; gap: 8px; }
     .btn-row > * { flex: 1; }
@@ -248,7 +290,9 @@
     }
     .jump-row input:focus { border-color: var(--accent); }
     .jump-row input::placeholder { color: var(--muted); }
-    .jump-row button {
+    /* Specificity: #side .jump-row button > #side button (so the side-pane
+       width:100% rule above doesn't stretch GO/★存 across the whole row). */
+    #side .jump-row button {
       flex: 0 0 auto;
       width: auto;
       padding: 10px 18px;
@@ -261,7 +305,6 @@
       display: flex;
       flex-direction: column;
       gap: 3px;
-      max-height: 160px;
       overflow-y: auto;
     }
     #bookmarks:empty { display: none; }
@@ -279,17 +322,10 @@
     }
     #bookmarks li:hover { border-color: var(--accent); }
     #bookmarks li .bk-name {
-      flex: 1; color: var(--text); font-weight: 500;
-      background: transparent; border: none; outline: none;
-      font-family: inherit; font-size: 12px; font-weight: 500;
-      padding: 2px 4px; border-radius: 3px; cursor: pointer;
-      min-width: 0;
+      flex: 1; min-width: 0;
+      color: var(--text); font-weight: 500; font-size: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    #bookmarks li .bk-name:focus {
-      background: var(--bg); cursor: text;
-      border: 1px solid var(--accent);
-    }
-    #bookmarks li .bk-coords { color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
     #bookmarks li button {
       width: 20px; height: 20px; padding: 0;
       background: transparent; border: none;
@@ -297,6 +333,37 @@
       flex-shrink: 0;
     }
     #bookmarks li button:hover { color: var(--danger); background: transparent; }
+
+    #bookmarks-pane {
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    #bookmarks-pane > .pane-header {
+      flex: 0 0 auto;
+      padding: 16px 16px 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    #bookmarks-pane > .pane-header h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 10px 0;
+      letter-spacing: 0.08em;
+    }
+    #bookmarks-pane > #bookmarks {
+      flex: 1 1 auto;
+      min-height: 0;          /* allow flex shrinking */
+      max-height: none;       /* override the 160px cap */
+      overflow-y: auto;
+      padding: 8px;
+      margin: 0;
+      background: transparent;
+    }
 
     .layer-control {
       position: absolute; top: 10px; right: 10px; z-index: 1000;
@@ -315,7 +382,211 @@
     }
   </style>
 </head>
-<body>
+<body class="dark">
+<nav class="h-12 shrink-0 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
+  <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
+    <span class="text-blue-500">●</span>
+    <span>Pikmin Walker</span>
+  </a>
+  <div class="flex items-center gap-1" id="nav-links">
+    <a href="/" data-page="home"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🌱 漫步種花
+    </a>
+    <a href="/flower-cruise" data-page="flower"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🌸 花朵巡航
+    </a>
+    <a href="/walk" data-page="walk"
+       class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🚶 道路漫步
+    </a>
+    <span aria-hidden="true" class="mx-1 w-px h-5 bg-border"></span>
+    <button id="navRestart" type="button" title="重啟伺服器"
+            class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🔄
+    </button>
+  </div>
+</nav>
+<script>
+  // Highlight the current nav link based on current pathname
+  (function() {
+    const path = location.pathname;
+    const map = { '/': 'home', '/flower-cruise': 'flower', '/walk': 'walk' };
+    const active = map[path] || '';
+    document.querySelectorAll('#nav-links a').forEach(a => {
+      if (a.dataset.page === active) {
+        a.classList.remove('text-muted-foreground');
+        a.classList.add('bg-accent', 'text-foreground');
+      }
+    });
+  })();
+</script>
+<script>
+//
+// ---- Modal (shadcn-style replacement for prompt/confirm) ----
+//
+const Modal = {
+  _show({ type, title, description, defaultValue = '', placeholder = '',
+          confirmText = '確定', cancelText = '取消', danger = false }) {
+    return new Promise((resolve) => {
+      const root = document.createElement('div');
+      root.className = 'fixed inset-0 z-[1200] flex items-center justify-center';
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'absolute inset-0 bg-black/60 backdrop-blur-sm';
+
+      const card = document.createElement('div');
+      card.style.cssText = 'position:relative;width:100%;max-width:420px;margin:0 16px;'
+        + 'background:var(--panel);color:var(--text);'
+        + 'border:1px solid var(--border);border-radius:12px;'
+        + 'box-shadow:0 20px 60px rgba(0,0,0,0.55);padding:20px 22px;'
+        + 'font-family:inherit;';
+
+      const titleEl = document.createElement('h3');
+      titleEl.style.cssText = 'margin:0 0 6px 0;font-size:15px;font-weight:600;letter-spacing:-0.01em;';
+      titleEl.textContent = title || '';
+      card.append(titleEl);
+
+      if (description) {
+        const desc = document.createElement('p');
+        desc.style.cssText = 'margin:0 0 14px 0;font-size:13px;color:var(--muted);'
+          + 'line-height:1.5;white-space:pre-wrap;';
+        desc.textContent = description;
+        card.append(desc);
+      } else {
+        card.style.paddingTop = '20px';
+      }
+
+      let input = null;
+      if (type === 'input') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.style.cssText = 'width:100%;height:36px;padding:6px 10px;margin-top:4px;'
+          + 'font-size:14px;font-family:inherit;color:var(--text);'
+          + 'background:var(--panel-2, var(--panel-solid, #334155));border:1px solid var(--border);'
+          + 'border-radius:8px;outline:none;transition:border-color 0.15s;';
+        input.addEventListener('focus', () => { input.style.borderColor = 'var(--accent)'; });
+        input.addEventListener('blur', () => { input.style.borderColor = 'var(--border)'; });
+        if (defaultValue) input.value = defaultValue;
+        if (placeholder) input.placeholder = placeholder;
+        card.append(input);
+      }
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.style.cssText = 'width:auto;padding:8px 16px;font-size:13px;font-weight:500;'
+        + 'color:var(--text);background:transparent;border:1px solid var(--border);'
+        + 'border-radius:8px;cursor:pointer;transition:background 0.15s;';
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--panel-2, var(--panel-solid, #334155))'; });
+      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+      cancelBtn.textContent = cancelText;
+
+      const okBtn = document.createElement('button');
+      okBtn.style.cssText = 'width:auto;padding:8px 18px;font-size:13px;font-weight:500;'
+        + 'color:white;border-radius:8px;cursor:pointer;transition:background 0.15s;'
+        + (danger
+            ? 'background:var(--danger);border:1px solid var(--danger);'
+            : 'background:var(--accent);border:1px solid var(--accent);');
+      okBtn.addEventListener('mouseenter', () => {
+        okBtn.style.background = danger ? 'var(--danger-hover, #dc2626)' : 'var(--accent-hover, #2563eb)';
+      });
+      okBtn.addEventListener('mouseleave', () => {
+        okBtn.style.background = danger ? 'var(--danger)' : 'var(--accent)';
+      });
+      okBtn.textContent = confirmText;
+
+      actions.append(cancelBtn, okBtn);
+      card.append(actions);
+
+      root.append(backdrop, card);
+      document.body.append(root);
+
+      const cancelValue = type === 'input' ? null : false;
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKey);
+        root.remove();
+        resolve(result);
+      };
+
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
+        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
+          e.preventDefault();
+          cleanup(type === 'input' ? input.value.trim() : true);
+        }
+      };
+      document.addEventListener('keydown', onKey);
+
+      backdrop.addEventListener('click', () => cleanup(cancelValue));
+      cancelBtn.addEventListener('click', () => cleanup(cancelValue));
+      okBtn.addEventListener('click', () => cleanup(type === 'input' ? input.value.trim() : true));
+
+      setTimeout(() => {
+        if (input) { input.focus(); input.select(); }
+        else { okBtn.focus(); }
+      }, 0);
+    });
+  },
+  input(opts) { return this._show({ type: 'input', ...opts }); },
+  confirm(opts) { return this._show({ type: 'confirm', ...opts }); },
+};
+</script>
+<script>
+  // Server restart trigger — wired to navbar 🔄
+  (function() {
+    const btn = document.getElementById('navRestart');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const ok = await Modal.confirm({
+        title: '重啟伺服器？',
+        description: '伺服器會停下 1-2 秒後自動回來，頁面會自動重新整理。',
+        confirmText: '重啟',
+        danger: true,
+      });
+      if (!ok) return;
+
+      // Fire and forget — server may die before responding
+      fetch('/api/admin/restart', { method: 'POST' }).catch(() => {});
+
+      // Full-screen overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;background:rgba(15,23,42,0.95);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#f1f5f9;font-family:inherit;';
+
+      const spinner = document.createElement('div');
+      spinner.style.cssText = 'font-size:32px;animation:pikmin-spin 1.2s linear infinite;';
+      spinner.textContent = '🔄';
+
+      const title = document.createElement('div');
+      title.style.cssText = 'font-size:16px;font-weight:600;';
+      title.textContent = '重啟伺服器中…';
+
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:13px;color:#94a3b8;';
+      sub.textContent = '就緒後自動重新整理';
+
+      const styleEl = document.createElement('style');
+      styleEl.textContent = '@keyframes pikmin-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }';
+
+      overlay.append(spinner, title, sub, styleEl);
+      document.body.append(overlay);
+
+      // Poll for server to come back
+      const tryReload = async () => {
+        try {
+          const res = await fetch('/api/profiles', { signal: AbortSignal.timeout(2000) });
+          if (res.ok) { location.reload(); return; }
+        } catch {}
+        setTimeout(tryReload, 800);
+      };
+      // Wait 2.5s before first poll attempt — server's `sleep 1` + `make stop-*` need time
+      setTimeout(tryReload, 2500);
+    });
+  })();
+</script>
 <div id="app">
   <div style="position:relative;">
     <div id="map"></div>
@@ -326,7 +597,6 @@
     </div>
   </div>
   <aside id="side">
-    <h1><span class="dot">●</span> Pikmin Walker</h1>
     <div id="device-info">
       <span class="indicator"></span>
       <span id="device-text">正在連線…</span>
@@ -340,10 +610,9 @@
       </div>
       <div class="jump-row" style="margin-top: 4px;">
         <input type="text" id="bookmarkName" placeholder="書籤名稱（自訂）" />
-        <button id="bookmarkAdd" title="加入書籤">★ 存</button>
+        <select id="bookmarkAddCategory" style="flex:0 0 auto;width:auto;min-width:80px;"></select>
+        <button id="bookmarkAdd" title="加入書籤" style="flex:0 0 auto;width:auto;padding:10px 14px;">★ 存</button>
       </div>
-      <div class="hint">先在上方輸入地名/座標按 GO 瞬移，再取個名字按 ★ 存書籤</div>
-      <ul id="bookmarks"></ul>
     </div>
 
     <select id="profile" style="display:none;"></select>
@@ -381,20 +650,23 @@
       <div id="status">idle</div>
     </div>
 
-    <a href="/flower-cruise" style="
-      display: block; text-align: center; padding: 12px;
-      margin-top: auto;
-      background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--accent); text-decoration: none;
-      font-size: 14px; font-weight: 500;
-    ">🌸 花朵巡航 →</a>
-    <a href="/walk" style="
-      display: block; text-align: center; padding: 12px;
-      margin-top: 8px;
-      background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--accent); text-decoration: none;
-      font-size: 14px; font-weight: 500;
-    ">🚶 道路漫步模式 →</a>
+  </aside>
+  <aside id="bookmarks-pane">
+    <div class="pane-header">
+      <h2>★ 書籤</h2>
+      <div class="hint" style="margin-bottom: 10px;">先在中間欄輸入地名/座標按 GO，再取個名字按 ★ 存</div>
+      <div id="bookmarks-controls" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="categoryFilter" style="flex:1;">
+            <option value="__all__">全部</option>
+          </select>
+          <button id="categoryAdd" title="新增分類" style="width:auto;padding:8px 10px;flex:0 0 auto;">+</button>
+          <button id="categoryManageToggle" title="管理分類" style="width:auto;padding:8px 10px;flex:0 0 auto;">✏️</button>
+        </div>
+        <div id="categoryManagePanel" style="display:none;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;max-height:200px;overflow-y:auto;"></div>
+      </div>
+    </div>
+    <ul id="bookmarks"></ul>
   </aside>
 </div>
 
@@ -690,43 +962,149 @@ document.getElementById('jumpInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); handleJumpInput(); }
 });
 
+const storage = {
+  get(key, fallback = '') {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch {}
+  },
+  debounce(fn, ms = 200) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  },
+};
+
+// Persist jumpInput across reloads
+const $jumpInput = document.getElementById('jumpInput');
+const saveJumpInput = storage.debounce(() => storage.set('pikmin.jumpInput', $jumpInput.value), 200);
+$jumpInput.addEventListener('input', saveJumpInput);
+$jumpInput.value = storage.get('pikmin.jumpInput', '');
+
 //
-// ---- Bookmarks ----
+// ---- Bookmarks state + UI ----
 //
-function renderBookmarks(list) {
+const DEFAULT_CATEGORY = '未分類';
+const ALL_FILTER = '__all__';
+let bookmarkState = { bookmarks: [], categories: [DEFAULT_CATEGORY] };
+
+function applyBookmarkState(state) {
+  bookmarkState = state;
+  refreshCategoryFilter();
+  refreshAddCategoryDropdown();
+  refreshManagePanel();
+  renderBookmarks();
+}
+
+function refreshCategoryFilter() {
+  const sel = document.getElementById('categoryFilter');
+  const prev = storage.get('pikmin.bookmarkCategoryFilter', '') || sel.value || ALL_FILTER;
+  sel.replaceChildren();
+  const all = document.createElement('option');
+  all.value = ALL_FILTER; all.textContent = `全部 (${bookmarkState.bookmarks.length})`;
+  sel.append(all);
+  bookmarkState.categories.forEach(cat => {
+    const count = bookmarkState.bookmarks.filter(b => b.category === cat).length;
+    const opt = document.createElement('option');
+    opt.value = cat; opt.textContent = `${cat} (${count})`;
+    sel.append(opt);
+  });
+  // Restore selection if still valid
+  if (prev === ALL_FILTER || bookmarkState.categories.includes(prev)) {
+    sel.value = prev;
+  } else {
+    sel.value = ALL_FILTER;
+  }
+}
+
+function refreshAddCategoryDropdown() {
+  const sel = document.getElementById('bookmarkAddCategory');
+  const prev = storage.get('pikmin.lastSelectedCategory', '') || sel.value || DEFAULT_CATEGORY;
+  sel.replaceChildren();
+  bookmarkState.categories.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat; opt.textContent = cat;
+    sel.append(opt);
+  });
+  sel.value = bookmarkState.categories.includes(prev) ? prev : DEFAULT_CATEGORY;
+}
+
+function refreshManagePanel() {
+  const panel = document.getElementById('categoryManagePanel');
+  panel.replaceChildren();
+  bookmarkState.categories.forEach(cat => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 6px;';
+    const label = document.createElement('span');
+    label.textContent = cat;
+    label.style.cssText = 'flex:1;color:var(--text);';
+    const renameBtn = document.createElement('button');
+    renameBtn.textContent = '✏️';
+    renameBtn.style.cssText = 'width:auto;padding:4px 8px;font-size:12px;';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '🗑️';
+    deleteBtn.style.cssText = 'width:auto;padding:4px 8px;font-size:12px;';
+    if (cat === DEFAULT_CATEGORY) {
+      renameBtn.disabled = true;
+      deleteBtn.disabled = true;
+      renameBtn.title = '系統分類，無法修改';
+      deleteBtn.title = '系統分類，無法修改';
+    } else {
+      renameBtn.addEventListener('click', () => renameCategory(cat));
+      deleteBtn.addEventListener('click', () => deleteCategory(cat));
+    }
+    row.append(label, renameBtn, deleteBtn);
+    panel.append(row);
+  });
+}
+
+function renderBookmarks() {
   const ul = document.getElementById('bookmarks');
   ul.replaceChildren();
-  list.forEach((bk, i) => {
+  const filter = document.getElementById('categoryFilter').value || ALL_FILTER;
+
+  bookmarkState.bookmarks.forEach((bk, i) => {
+    if (filter !== ALL_FILTER && bk.category !== filter) return;
+
     const li = document.createElement('li');
+    li.dataset.originalIdx = String(i);
     li.title = `${bk.lat.toFixed(5)}, ${bk.lon.toFixed(5)}`;
 
-    // Editable name field — click to focus/edit, blur saves
-    const nameEl = document.createElement('input');
-    nameEl.type = 'text';
+    const nameEl = document.createElement('span');
     nameEl.className = 'bk-name';
-    nameEl.value = bk.name;
-    nameEl.addEventListener('focus', (e) => e.stopPropagation());
-    nameEl.addEventListener('click', (e) => e.stopPropagation());
-    nameEl.addEventListener('blur', () => {
-      const newName = nameEl.value.trim();
-      if (newName && newName !== bk.name) {
-        renameBookmark(i, newName);
-      }
-    });
-    nameEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    nameEl.textContent = bk.name;
+
+    const renameBtn = document.createElement('button');
+    renameBtn.textContent = '✏️';
+    renameBtn.title = '重新命名';
+    renameBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const result = await Modal.input({
+        title: '重新命名書籤',
+        defaultValue: bk.name,
+      });
+      if (result == null) return;
+      const newName = result.trim();
+      if (newName && newName !== bk.name) renameBookmark(i, newName);
     });
 
-    const coords = document.createElement('span');
-    coords.className = 'bk-coords';
-    coords.textContent = `${bk.lat.toFixed(4)}, ${bk.lon.toFixed(4)}`;
+    const catSel = document.createElement('select');
+    catSel.style.cssText = 'flex:0 0 auto;width:auto;padding:2px 4px;font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--muted);';
+    bookmarkState.categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat; opt.textContent = cat;
+      catSel.append(opt);
+    });
+    catSel.value = bk.category || DEFAULT_CATEGORY;
+    catSel.addEventListener('click', e => e.stopPropagation());
+    catSel.addEventListener('change', () => recategorizeBookmark(i, catSel.value));
 
     const rm = document.createElement('button');
     rm.textContent = '✕';
     rm.title = '刪除書籤';
-    rm.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(i); });
+    rm.addEventListener('click', e => { e.stopPropagation(); deleteBookmark(i); });
 
-    li.append(nameEl, coords, rm);
+    li.append(nameEl, renameBtn, catSel, rm);
     li.addEventListener('click', () => {
       document.getElementById('jumpInput').value = bk.name;
       teleportTo(bk.lat, bk.lon);
@@ -735,55 +1113,57 @@ function renderBookmarks(list) {
     });
     ul.append(li);
   });
+
+  if (!ul.children.length) {
+    const empty = document.createElement('li');
+    empty.style.cssText = 'color:var(--muted);text-align:center;padding:16px;background:transparent;border:1px dashed var(--border);font-family:inherit;';
+    empty.textContent = filter === ALL_FILTER ? '尚無書籤' : `「${filter}」分類目前沒有書籤`;
+    ul.append(empty);
+  }
 }
 
 function loadBookmarks() {
   fetch('/api/bookmarks')
     .then(r => r.json())
-    .then(renderBookmarks)
+    .then(applyBookmarkState)
     .catch(() => {});
 }
 
 async function addBookmark() {
   const jumpInput = document.getElementById('jumpInput').value.trim();
   const nameInput = document.getElementById('bookmarkName').value.trim();
+  const category = document.getElementById('bookmarkAddCategory').value || DEFAULT_CATEGORY;
   if (!jumpInput) { setStatus('先在「地名或 lat, lon」輸入位置再按 ★', 'error'); return; }
 
-  // Parse coords from jumpInput
   let lat, lon;
   const m = jumpInput.match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
   if (m) {
-    lat = parseFloat(m[1]);
-    lon = parseFloat(m[2]);
+    lat = parseFloat(m[1]); lon = parseFloat(m[2]);
   } else {
-    // Geocode to get coords
     try {
       const url = 'https://nominatim.openstreetmap.org/search'
         + `?format=json&limit=1&q=${encodeURIComponent(jumpInput)}`;
       const res = await fetch(url);
       const hits = await res.json();
       if (!hits.length) { setStatus(`找不到「${jumpInput}」`, 'error'); return; }
-      lat = parseFloat(hits[0].lat);
-      lon = parseFloat(hits[0].lon);
+      lat = parseFloat(hits[0].lat); lon = parseFloat(hits[0].lon);
     } catch (err) {
       setStatus(`geocode 失敗: ${err.message}`, 'error');
       return;
     }
   }
 
-  // Name priority: user-typed name > jump input text > raw coords
   const name = nameInput || jumpInput;
-
   try {
     const res = await fetch('/api/bookmarks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, lat, lon }),
+      body: JSON.stringify({ name, lat, lon, category }),
     });
-    const list = await res.json();
-    renderBookmarks(list);
+    const state = await res.json();
+    applyBookmarkState(state);
     document.getElementById('bookmarkName').value = '';
-    setStatus(`★ 已加入書籤「${name}」`, 'done');
+    setStatus(`★ 已加入書籤「${name}」(${category})`, 'done');
   } catch (err) {
     setStatus(`書籤儲存失敗: ${err.message}`, 'error');
   }
@@ -796,25 +1176,116 @@ async function renameBookmark(idx, newName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName }),
     });
-    const list = await res.json();
-    renderBookmarks(list);
+    applyBookmarkState(await res.json());
     setStatus(`書籤已改名為「${newName}」`, 'done');
   } catch (err) {
     setStatus(`改名失敗: ${err.message}`, 'error');
   }
 }
 
+async function recategorizeBookmark(idx, category) {
+  try {
+    const res = await fetch(`/api/bookmarks/${idx}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    applyBookmarkState(await res.json());
+  } catch (err) {
+    setStatus(`分類更新失敗: ${err.message}`, 'error');
+  }
+}
+
 async function deleteBookmark(idx) {
   try {
     const res = await fetch(`/api/bookmarks/${idx}`, { method: 'DELETE' });
-    const list = await res.json();
-    renderBookmarks(list);
+    applyBookmarkState(await res.json());
+  } catch (err) {
+    setStatus(`刪除失敗: ${err.message}`, 'error');
+  }
+}
+
+async function addCategory() {
+  const result = await Modal.input({
+    title: '新增書籤分類',
+    placeholder: '例：日本、本土、收藏',
+  });
+  if (result == null) return;
+  const name = result.trim();
+  if (!name) return;
+  if (bookmarkState.categories.includes(name)) {
+    setStatus(`分類「${name}」已存在`, 'error'); return;
+  }
+  try {
+    const res = await fetch('/api/bookmark-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    applyBookmarkState(await res.json());
+    setStatus(`已新增分類「${name}」`, 'done');
+  } catch (err) {
+    setStatus(`新增失敗: ${err.message}`, 'error');
+  }
+}
+
+async function renameCategory(oldName) {
+  const result = await Modal.input({
+    title: '重新命名分類',
+    description: `把「${oldName}」改成什麼？`,
+    defaultValue: oldName,
+  });
+  if (result == null) return;
+  const newName = result.trim();
+  if (!newName || newName === oldName) return;
+  try {
+    const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(oldName)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    applyBookmarkState(await res.json());
+    setStatus(`分類「${oldName}」已改名為「${newName}」`, 'done');
+  } catch (err) {
+    setStatus(`改名失敗: ${err.message}`, 'error');
+  }
+}
+
+async function deleteCategory(name) {
+  const ok = await Modal.confirm({
+    title: '刪除分類',
+    description: `確定要刪除「${name}」？\n屬於這個分類的書籤會自動歸到「${DEFAULT_CATEGORY}」。`,
+    confirmText: '刪除',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    applyBookmarkState(await res.json());
+    setStatus(`已刪除分類「${name}」`, 'done');
   } catch (err) {
     setStatus(`刪除失敗: ${err.message}`, 'error');
   }
 }
 
 document.getElementById('bookmarkAdd').addEventListener('click', addBookmark);
+document.getElementById('categoryAdd').addEventListener('click', addCategory);
+document.getElementById('categoryManageToggle').addEventListener('click', () => {
+  const panel = document.getElementById('categoryManagePanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('categoryFilter').addEventListener('change', () => {
+  storage.set('pikmin.bookmarkCategoryFilter', document.getElementById('categoryFilter').value);
+  renderBookmarks();
+});
+document.getElementById('bookmarkAddCategory').addEventListener('change', () => {
+  storage.set('pikmin.lastSelectedCategory', document.getElementById('bookmarkAddCategory').value);
+});
+
 loadBookmarks();
 
 //
