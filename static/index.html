@@ -313,17 +313,10 @@
     }
     #bookmarks li:hover { border-color: var(--accent); }
     #bookmarks li .bk-name {
-      flex: 1; color: var(--text); font-weight: 500;
-      background: transparent; border: none; outline: none;
-      font-family: inherit; font-size: 12px; font-weight: 500;
-      padding: 2px 4px; border-radius: 3px; cursor: pointer;
-      min-width: 0;
+      flex: 1; min-width: 0;
+      color: var(--text); font-weight: 500; font-size: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    #bookmarks li .bk-name:focus {
-      background: var(--bg); cursor: text;
-      border: 1px solid var(--accent);
-    }
-    #bookmarks li .bk-coords { color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
     #bookmarks li button {
       width: 20px; height: 20px; padding: 0;
       background: transparent; border: none;
@@ -381,7 +374,7 @@
   </style>
 </head>
 <body class="dark">
-<nav class="h-12 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
+<nav class="h-12 shrink-0 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
   <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
     <span class="text-blue-500">●</span>
     <span>Pikmin Walker</span>
@@ -479,20 +472,6 @@
       <div id="status">idle</div>
     </div>
 
-    <a href="/flower-cruise" style="
-      display: block; text-align: center; padding: 12px;
-      margin-top: auto;
-      background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--accent); text-decoration: none;
-      font-size: 14px; font-weight: 500;
-    ">🌸 花朵巡航 →</a>
-    <a href="/walk" style="
-      display: block; text-align: center; padding: 12px;
-      margin-top: 8px;
-      background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--accent); text-decoration: none;
-      font-size: 14px; font-weight: 500;
-    ">🚶 道路漫步模式 →</a>
   </aside>
   <aside id="bookmarks-pane">
     <div class="pane-header">
@@ -897,18 +876,17 @@ function renderBookmarks() {
     li.dataset.originalIdx = String(i);
     li.title = `${bk.lat.toFixed(5)}, ${bk.lon.toFixed(5)}`;
 
-    const nameEl = document.createElement('input');
-    nameEl.type = 'text';
+    const nameEl = document.createElement('span');
     nameEl.className = 'bk-name';
-    nameEl.value = bk.name;
-    nameEl.addEventListener('focus', e => e.stopPropagation());
-    nameEl.addEventListener('click', e => e.stopPropagation());
-    nameEl.addEventListener('blur', () => {
-      const newName = nameEl.value.trim();
+    nameEl.textContent = bk.name;
+
+    const renameBtn = document.createElement('button');
+    renameBtn.textContent = '✏️';
+    renameBtn.title = '重新命名';
+    renameBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newName = (prompt('新書籤名稱：', bk.name) || '').trim();
       if (newName && newName !== bk.name) renameBookmark(i, newName);
-    });
-    nameEl.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
     });
 
     const catSel = document.createElement('select');
@@ -927,7 +905,7 @@ function renderBookmarks() {
     rm.title = '刪除書籤';
     rm.addEventListener('click', e => { e.stopPropagation(); deleteBookmark(i); });
 
-    li.append(nameEl, catSel, rm);
+    li.append(nameEl, renameBtn, catSel, rm);
     li.addEventListener('click', () => {
       document.getElementById('jumpInput').value = bk.name;
       teleportTo(bk.lat, bk.lon);
