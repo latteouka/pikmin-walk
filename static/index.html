@@ -804,6 +804,118 @@ $jumpInput.addEventListener('input', saveJumpInput);
 $jumpInput.value = storage.get('pikmin.jumpInput', '');
 
 //
+// ---- Modal (shadcn-style replacement for prompt/confirm) ----
+//
+const Modal = {
+  _show({ type, title, description, defaultValue = '', placeholder = '',
+          confirmText = '確定', cancelText = '取消', danger = false }) {
+    return new Promise((resolve) => {
+      const root = document.createElement('div');
+      root.className = 'fixed inset-0 z-[1200] flex items-center justify-center';
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'absolute inset-0 bg-black/60 backdrop-blur-sm';
+
+      const card = document.createElement('div');
+      card.style.cssText = 'position:relative;width:100%;max-width:420px;margin:0 16px;'
+        + 'background:var(--panel);color:var(--text);'
+        + 'border:1px solid var(--border);border-radius:12px;'
+        + 'box-shadow:0 20px 60px rgba(0,0,0,0.55);padding:20px 22px;'
+        + 'font-family:inherit;';
+
+      const titleEl = document.createElement('h3');
+      titleEl.style.cssText = 'margin:0 0 6px 0;font-size:15px;font-weight:600;letter-spacing:-0.01em;';
+      titleEl.textContent = title || '';
+      card.append(titleEl);
+
+      if (description) {
+        const desc = document.createElement('p');
+        desc.style.cssText = 'margin:0 0 14px 0;font-size:13px;color:var(--muted);'
+          + 'line-height:1.5;white-space:pre-wrap;';
+        desc.textContent = description;
+        card.append(desc);
+      } else {
+        card.style.paddingTop = '20px';
+      }
+
+      let input = null;
+      if (type === 'input') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.style.cssText = 'width:100%;height:36px;padding:6px 10px;margin-top:4px;'
+          + 'font-size:14px;font-family:inherit;color:var(--text);'
+          + 'background:var(--panel-2);border:1px solid var(--border);'
+          + 'border-radius:8px;outline:none;transition:border-color 0.15s;';
+        input.addEventListener('focus', () => { input.style.borderColor = 'var(--accent)'; });
+        input.addEventListener('blur', () => { input.style.borderColor = 'var(--border)'; });
+        if (defaultValue) input.value = defaultValue;
+        if (placeholder) input.placeholder = placeholder;
+        card.append(input);
+      }
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.style.cssText = 'width:auto;padding:8px 16px;font-size:13px;font-weight:500;'
+        + 'color:var(--text);background:transparent;border:1px solid var(--border);'
+        + 'border-radius:8px;cursor:pointer;transition:background 0.15s;';
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--panel-2)'; });
+      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+      cancelBtn.textContent = cancelText;
+
+      const okBtn = document.createElement('button');
+      okBtn.style.cssText = 'width:auto;padding:8px 18px;font-size:13px;font-weight:500;'
+        + 'color:white;border-radius:8px;cursor:pointer;transition:background 0.15s;'
+        + (danger
+            ? 'background:var(--danger);border:1px solid var(--danger);'
+            : 'background:var(--accent);border:1px solid var(--accent);');
+      okBtn.addEventListener('mouseenter', () => {
+        okBtn.style.background = danger ? 'var(--danger-hover)' : 'var(--accent-hover)';
+      });
+      okBtn.addEventListener('mouseleave', () => {
+        okBtn.style.background = danger ? 'var(--danger)' : 'var(--accent)';
+      });
+      okBtn.textContent = confirmText;
+
+      actions.append(cancelBtn, okBtn);
+      card.append(actions);
+
+      root.append(backdrop, card);
+      document.body.append(root);
+
+      const cancelValue = type === 'input' ? null : false;
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKey);
+        root.remove();
+        resolve(result);
+      };
+
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
+        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
+          e.preventDefault();
+          cleanup(type === 'input' ? input.value.trim() : true);
+        }
+      };
+      document.addEventListener('keydown', onKey);
+
+      backdrop.addEventListener('click', () => cleanup(cancelValue));
+      cancelBtn.addEventListener('click', () => cleanup(cancelValue));
+      okBtn.addEventListener('click', () => cleanup(type === 'input' ? input.value.trim() : true));
+
+      setTimeout(() => {
+        if (input) { input.focus(); input.select(); }
+        else { okBtn.focus(); }
+      }, 0);
+    });
+  },
+  input(opts) { return this._show({ type: 'input', ...opts }); },
+  confirm(opts) { return this._show({ type: 'confirm', ...opts }); },
+};
+
+//
 // ---- Bookmarks state + UI ----
 //
 const DEFAULT_CATEGORY = '未分類';
@@ -899,9 +1011,14 @@ function renderBookmarks() {
     const renameBtn = document.createElement('button');
     renameBtn.textContent = '✏️';
     renameBtn.title = '重新命名';
-    renameBtn.addEventListener('click', (e) => {
+    renameBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const newName = (prompt('新書籤名稱：', bk.name) || '').trim();
+      const result = await Modal.input({
+        title: '重新命名書籤',
+        defaultValue: bk.name,
+      });
+      if (result == null) return;
+      const newName = result.trim();
       if (newName && newName !== bk.name) renameBookmark(i, newName);
     });
 
@@ -1023,7 +1140,12 @@ async function deleteBookmark(idx) {
 }
 
 async function addCategory() {
-  const name = (prompt('新分類名稱：') || '').trim();
+  const result = await Modal.input({
+    title: '新增書籤分類',
+    placeholder: '例：日本、本土、收藏',
+  });
+  if (result == null) return;
+  const name = result.trim();
   if (!name) return;
   if (bookmarkState.categories.includes(name)) {
     setStatus(`分類「${name}」已存在`, 'error'); return;
@@ -1042,7 +1164,13 @@ async function addCategory() {
 }
 
 async function renameCategory(oldName) {
-  const newName = (prompt(`重新命名「${oldName}」為：`, oldName) || '').trim();
+  const result = await Modal.input({
+    title: '重新命名分類',
+    description: `把「${oldName}」改成什麼？`,
+    defaultValue: oldName,
+  });
+  if (result == null) return;
+  const newName = result.trim();
   if (!newName || newName === oldName) return;
   try {
     const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(oldName)}`, {
@@ -1059,7 +1187,13 @@ async function renameCategory(oldName) {
 }
 
 async function deleteCategory(name) {
-  if (!confirm(`確定要刪除分類「${name}」？\n屬於這個分類的書籤會自動歸到「${DEFAULT_CATEGORY}」。`)) return;
+  const ok = await Modal.confirm({
+    title: '刪除分類',
+    description: `確定要刪除「${name}」？\n屬於這個分類的書籤會自動歸到「${DEFAULT_CATEGORY}」。`,
+    confirmText: '刪除',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/bookmark-categories/${encodeURIComponent(name)}`, {
       method: 'DELETE',
