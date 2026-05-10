@@ -86,14 +86,10 @@
       margin: 0;
       letter-spacing: 0.08em;
     }
-    /* Use ID-prefixed selectors so we beat Tailwind CDN preflight,
-       which otherwise resets button/select font-size to 100% (= 16px). */
+    /* ID-prefixed so we don't pollute the navbar's <button>/<a> styling
+       and we still beat Tailwind CDN preflight inside the side panes. */
     #side select, #side button, #side input,
     #bookmarks-pane select, #bookmarks-pane button, #bookmarks-pane input {
-      font-size: 14px;
-      font-family: inherit;
-    }
-    select, button {
       width: 100%;
       padding: 10px 12px;
       font-size: 14px;
@@ -105,28 +101,32 @@
       outline: none;
       transition: all 0.15s;
     }
-    select:hover, select:focus { border-color: var(--accent); }
-    button { cursor: pointer; font-weight: 500; }
-    button:hover:not(:disabled) { background: var(--border); }
-    button.primary {
+    #side select:hover, #side select:focus,
+    #bookmarks-pane select:hover, #bookmarks-pane select:focus { border-color: var(--accent); }
+    #side button, #bookmarks-pane button { cursor: pointer; font-weight: 500; }
+    #side button:hover:not(:disabled),
+    #bookmarks-pane button:hover:not(:disabled) { background: var(--border); }
+    #side button.primary, #bookmarks-pane button.primary {
       background: var(--accent);
       border-color: var(--accent);
       color: white;
     }
-    button.primary:hover:not(:disabled) {
+    #side button.primary:hover:not(:disabled),
+    #bookmarks-pane button.primary:hover:not(:disabled) {
       background: var(--accent-hover);
       border-color: var(--accent-hover);
     }
-    button.danger {
+    #side button.danger, #bookmarks-pane button.danger {
       background: var(--danger);
       border-color: var(--danger);
       color: white;
     }
-    button.danger:hover:not(:disabled) {
+    #side button.danger:hover:not(:disabled),
+    #bookmarks-pane button.danger:hover:not(:disabled) {
       background: var(--danger-hover);
       border-color: var(--danger-hover);
     }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #side button:disabled, #bookmarks-pane button:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .btn-row { display: flex; gap: 8px; }
     .btn-row > * { flex: 1; }
@@ -290,7 +290,9 @@
     }
     .jump-row input:focus { border-color: var(--accent); }
     .jump-row input::placeholder { color: var(--muted); }
-    .jump-row button {
+    /* Specificity: #side .jump-row button > #side button (so the side-pane
+       width:100% rule above doesn't stretch GO/★存 across the whole row). */
+    #side .jump-row button {
       flex: 0 0 auto;
       width: auto;
       padding: 10px 18px;
