@@ -982,7 +982,13 @@ connectWS();
     ta.addEventListener('input', save);
     try {
       const v = localStorage.getItem(KEY);
-      if (v && !ta.value) ta.value = v;
+      if (v && !ta.value) {
+        ta.value = v;
+        // Programmatic value assignment doesn't fire 'input', so listeners
+        // (e.g. updateParseInfo populating parsedFlowers) never run on
+        // reload. Dispatch one ourselves so derived state stays in sync.
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     } catch {}
   })();
 </script>
