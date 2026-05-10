@@ -1,7 +1,7 @@
 ---
 title: Pikmin Walker UI 重做設計
 created: 2026-05-10
-status: approved
+status: implemented
 ---
 
 # Pikmin Walker UI 重做設計
