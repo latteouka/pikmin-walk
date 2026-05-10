@@ -380,7 +380,7 @@ const Modal = {
 
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
-        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
+        else if (e.key === 'Enter' && !e.isComposing && (type === 'confirm' || document.activeElement === input)) {
           e.preventDefault();
           cleanup(type === 'input' ? input.value.trim() : true);
         }

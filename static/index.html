@@ -649,7 +649,7 @@ const Modal = {
 
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
-        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
+        else if (e.key === 'Enter' && !e.isComposing && (type === 'confirm' || document.activeElement === input)) {
           e.preventDefault();
           cleanup(type === 'input' ? input.value.trim() : true);
         }
@@ -1046,7 +1046,9 @@ document.getElementById('clearLoc').addEventListener('click', () => {
 });
 document.getElementById('jumpButton').addEventListener('click', handleJumpInput);
 document.getElementById('jumpInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); handleJumpInput(); }
+  // Guard against IME composition — pressing Enter to commit a candidate
+  // (Chinese/Japanese/Korean input methods) should NOT fire the action.
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); handleJumpInput(); }
 });
 
 const storage = {
