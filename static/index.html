@@ -365,6 +365,73 @@
       background: transparent;
     }
 
+    /* Drawer backdrop. `right` is overridden per breakpoint so it covers
+       only the map area, leaving #side usable as a peek-behind. */
+    #drawerBackdrop {
+      display: none;
+      position: fixed; top: 48px; left: 0; right: 0; bottom: 0;
+      z-index: 1095;
+      background: rgba(0,0,0,0.4);
+      backdrop-filter: blur(2px);
+    }
+    #drawerBackdrop.open { display: block; }
+
+    /* ─── Responsive breakpoints ─── */
+
+    /* 1280–1440: shrink side columns slightly so map keeps breathing room
+       on 14" / 15" MacBooks. (Inclusive of 1280 — aligns with Tailwind xl.) */
+    @media (max-width: 1440px) and (min-width: 1280px) {
+      #app { grid-template-columns: 1fr 340px 280px; }
+    }
+
+    /* < 1280: collapse to two columns; bookmarks pane becomes a slide-in
+       drawer overlapping #side. 1279.98 aligns with Tailwind's `xl:hidden`
+       (which only kicks in >= 1280). */
+    @media (max-width: 1279.98px) {
+      #app { grid-template-columns: 1fr 340px; }
+      #bookmarks-pane {
+        position: fixed;
+        top: 48px;
+        right: 0;
+        bottom: 0;
+        width: 340px;          /* matches #side at this range */
+        z-index: 1100;
+        transform: translateX(100%);
+        transition: transform 0.25s ease;
+        box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+        border-left: 1px solid var(--border);
+      }
+      #bookmarks-pane.open { transform: translateX(0); }
+      /* Backdrop only dims the map; #side stays visible behind drawer */
+      #drawerBackdrop { right: 340px; }
+    }
+
+    /* < 1024: tighten side toolbar; drawer + backdrop track the new width. */
+    @media (max-width: 1023.98px) {
+      #app { grid-template-columns: 1fr 320px; }
+      #side { padding: 16px; gap: 14px; }
+      #bookmarks-pane { width: 320px; }
+      #drawerBackdrop { right: 320px; }
+    }
+
+    /* < 768: #side becomes a left drawer too; map fills viewport */
+    @media (max-width: 767.98px) {
+      #app { grid-template-columns: 1fr; }
+      #side {
+        position: fixed;
+        top: 48px; left: 0; bottom: 0;
+        width: min(320px, 90vw);
+        z-index: 1100;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: 8px 0 32px rgba(0,0,0,0.5);
+      }
+      #side.open { transform: translateX(0); }
+      #bookmarks-pane { width: min(320px, 90vw); }
+      /* Both drawers overlay map, backdrop spans full width */
+      #drawerBackdrop { right: 0; }
+    }
+
     .layer-control {
       position: absolute; top: 10px; right: 10px; z-index: 1000;
       display: flex; gap: 4px;
@@ -384,23 +451,33 @@
 </head>
 <body class="dark">
 <nav class="h-12 shrink-0 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
-  <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
-    <span class="text-blue-500">●</span>
-    <span>Pikmin Walker</span>
-  </a>
+  <div class="flex items-center gap-2">
+    <button id="navSideToggle" type="button" title="工具列"
+            class="md:hidden px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      ☰
+    </button>
+    <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
+      <span class="text-blue-500">●</span>
+      <span class="hidden sm:inline">Pikmin Walker</span>
+    </a>
+  </div>
   <div class="flex items-center gap-1" id="nav-links">
     <a href="/" data-page="home"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🌱 漫步種花
+      🌱<span class="hidden md:inline"> 漫步種花</span>
     </a>
     <a href="/flower-cruise" data-page="flower"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🌸 花朵巡航
+      🌸<span class="hidden md:inline"> 花朵巡航</span>
     </a>
     <a href="/walk" data-page="walk"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🚶 道路漫步
+      🚶<span class="hidden md:inline"> 道路漫步</span>
     </a>
+    <button id="navBookmarksToggle" type="button" title="書籤"
+            class="xl:hidden px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      ★
+    </button>
     <span aria-hidden="true" class="mx-1 w-px h-5 bg-border"></span>
     <button id="navRestart" type="button" title="重啟伺服器"
             class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
@@ -408,6 +485,7 @@
     </button>
   </div>
 </nav>
+<div id="drawerBackdrop"></div>
 <script>
   // Highlight the current nav link based on current pathname
   (function() {
@@ -421,6 +499,59 @@
       }
     });
   })();
+</script>
+<script>
+  // ---- Drawer toggles (responsive) ----
+  // Wait for #side and #bookmarks-pane to exist (they're parsed after this <script>)
+  document.addEventListener('DOMContentLoaded', () => {
+    const side = document.getElementById('side');
+    const pane = document.getElementById('bookmarks-pane');
+    const backdrop = document.getElementById('drawerBackdrop');
+    const sideBtn = document.getElementById('navSideToggle');
+    const paneBtn = document.getElementById('navBookmarksToggle');
+
+    function close() {
+      side?.classList.remove('open');
+      pane?.classList.remove('open');
+      backdrop.classList.remove('open');
+    }
+    function syncBackdrop() {
+      const anyOpen = side?.classList.contains('open') || pane?.classList.contains('open');
+      backdrop.classList.toggle('open', !!anyOpen);
+    }
+
+    sideBtn?.addEventListener('click', () => {
+      pane?.classList.remove('open');
+      side?.classList.toggle('open');
+      syncBackdrop();
+    });
+    paneBtn?.addEventListener('click', () => {
+      side?.classList.remove('open');
+      pane?.classList.toggle('open');
+      syncBackdrop();
+    });
+    backdrop.addEventListener('click', close);
+
+    // Esc closes any open drawer
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' &&
+          (side?.classList.contains('open') || pane?.classList.contains('open'))) {
+        close();
+      }
+    });
+
+    // Auto-close drawers on resize past their breakpoint
+    let lastWidth = window.innerWidth;
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth;
+      // Crossing 1280: bookmarks pane stops being a drawer
+      if (lastWidth < 1280 && w >= 1280) pane?.classList.remove('open');
+      // Crossing 768: side stops being a drawer
+      if (lastWidth < 768 && w >= 768) side?.classList.remove('open');
+      syncBackdrop();
+      lastWidth = w;
+    });
+  });
 </script>
 <script>
 //

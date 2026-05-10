@@ -65,10 +65,26 @@
       padding: 20px 24px;
       min-width: 460px;
       max-width: 540px;
+      max-height: calc(100vh - 96px);   /* leave nav (48) + breathing room */
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 12px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    /* Narrow viewports: panel becomes a docked bottom sheet */
+    @media (max-width: 600px) {
+      #panel {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        transform: none;
+        min-width: 0;
+        max-width: none;
+        border-radius: 16px 16px 0 0;
+        padding: 16px;
+        max-height: 70vh;
+      }
     }
     .panel-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -232,20 +248,20 @@
 <nav class="h-12 shrink-0 px-4 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur sticky top-0 z-[1100]">
   <a href="/" class="flex items-center gap-2 text-foreground font-semibold tracking-tight">
     <span class="text-blue-500">●</span>
-    <span>Pikmin Walker</span>
+    <span class="hidden sm:inline">Pikmin Walker</span>
   </a>
   <div class="flex items-center gap-1" id="nav-links">
     <a href="/" data-page="home"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🌱 漫步種花
+      🌱<span class="hidden md:inline"> 漫步種花</span>
     </a>
     <a href="/flower-cruise" data-page="flower"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🌸 花朵巡航
+      🌸<span class="hidden md:inline"> 花朵巡航</span>
     </a>
     <a href="/walk" data-page="walk"
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-      🚶 道路漫步
+      🚶<span class="hidden md:inline"> 道路漫步</span>
     </a>
     <span aria-hidden="true" class="mx-1 w-px h-5 bg-border"></span>
     <button id="navRestart" type="button" title="重啟伺服器"
