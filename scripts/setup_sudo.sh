@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Install a sudoers.d rule so `pymobiledevice3 remote tunneld` does not
-# prompt for a password. Idempotent — re-running just overwrites the file.
+# Install a sudoers.d rule that grants the current user NOPASSWD access
+# to exactly the commands Pikmin Walker needs as root:
 #
-# To undo: make remove-sudo (or sudo rm /etc/sudoers.d/pikmin-walk-tunneld)
+#   * `pymobiledevice3 remote tunneld`        — manual dev-mode launch
+#   * `launchctl kickstart -k system/com.pikmin.tunneld`
+#                                             — smart restart bouncing
+#                                               the tunneld LaunchDaemon
+#   * `pkill -f pymobiledevice3.*tunneld`     — dev-mode tunnel reset
+#
+# Idempotent — re-running overwrites the file. To undo: make remove-sudo
 set -euo pipefail
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -27,12 +33,18 @@ ok "pymobiledevice3 → $PMD"
 
 USERNAME=$(whoami)
 
-# 2. Build the sudoers line and validate it BEFORE installing — a broken
+# 2. Build the sudoers entries and validate before installing — a broken
 #    sudoers file can lock you out of sudo entirely.
-SUDOERS_LINE="$USERNAME ALL=(ALL) NOPASSWD: $PMD remote tunneld"
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
-echo "$SUDOERS_LINE" > "$TMP"
+{
+    echo "# Pikmin Walker — auto-generated. DO NOT edit. Re-run scripts/setup_sudo.sh."
+    echo "$USERNAME ALL=(ALL) NOPASSWD: $PMD remote tunneld"
+    echo "$USERNAME ALL=(ALL) NOPASSWD: /bin/launchctl kickstart -k system/com.pikmin.tunneld"
+    echo "$USERNAME ALL=(ALL) NOPASSWD: /bin/launchctl bootstrap system /Library/LaunchDaemons/com.pikmin.tunneld.plist"
+    echo "$USERNAME ALL=(ALL) NOPASSWD: /bin/launchctl bootout system/com.pikmin.tunneld"
+    echo "$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/pkill -f pymobiledevice3.*tunneld"
+} > "$TMP"
 
 if ! sudo visudo -cf "$TMP" >/dev/null 2>&1; then
     err "產生的 sudoers entry 語法錯誤："
@@ -49,11 +61,10 @@ ok "已寫入 $SUDOERS_FILE"
 
 echo
 echo "規則內容："
-echo "  $SUDOERS_LINE"
+sed 's/^/  /' "$SUDOERS_FILE" 2>/dev/null || sudo sed 's/^/  /' "$SUDOERS_FILE"
 echo
 echo "  允許的 user：$USERNAME"
-echo "  允許的指令：$PMD remote tunneld"
 echo "  其他 sudo 操作仍需密碼"
 echo
-echo "✨ 之後 make start 不會再問 sudo 密碼了。"
+echo "✨ 之後 make start / 智慧重啟按鈕都不會再問 sudo 密碼。"
 echo "  要 undo: make remove-sudo"

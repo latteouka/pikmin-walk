@@ -479,6 +479,10 @@
       ★
     </button>
     <span aria-hidden="true" class="mx-1 w-px h-5 bg-border"></span>
+    <button id="navUpdate" type="button" title="檢查更新"
+            class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      <span class="nav-update-icon">✨</span>
+    </button>
     <button id="navRestart" type="button" title="重啟伺服器"
             class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
       🔄
@@ -666,58 +670,7 @@ const Modal = {
   confirm(opts) { return this._show({ type: 'confirm', ...opts }); },
 };
 </script>
-<script>
-  // Server restart trigger — wired to navbar 🔄
-  (function() {
-    const btn = document.getElementById('navRestart');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      const ok = await Modal.confirm({
-        title: '重啟伺服器？',
-        description: '伺服器會停下 1-2 秒後自動回來，頁面會自動重新整理。',
-        confirmText: '重啟',
-        danger: true,
-      });
-      if (!ok) return;
-
-      // Fire and forget — server may die before responding
-      fetch('/api/admin/restart', { method: 'POST' }).catch(() => {});
-
-      // Full-screen overlay
-      const overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;background:rgba(15,23,42,0.95);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#f1f5f9;font-family:inherit;';
-
-      const spinner = document.createElement('div');
-      spinner.style.cssText = 'font-size:32px;animation:pikmin-spin 1.2s linear infinite;';
-      spinner.textContent = '🔄';
-
-      const title = document.createElement('div');
-      title.style.cssText = 'font-size:16px;font-weight:600;';
-      title.textContent = '重啟伺服器中…';
-
-      const sub = document.createElement('div');
-      sub.style.cssText = 'font-size:13px;color:#94a3b8;';
-      sub.textContent = '就緒後自動重新整理';
-
-      const styleEl = document.createElement('style');
-      styleEl.textContent = '@keyframes pikmin-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }';
-
-      overlay.append(spinner, title, sub, styleEl);
-      document.body.append(overlay);
-
-      // Poll for server to come back
-      const tryReload = async () => {
-        try {
-          const res = await fetch('/api/profiles', { signal: AbortSignal.timeout(2000) });
-          if (res.ok) { location.reload(); return; }
-        } catch {}
-        setTimeout(tryReload, 800);
-      };
-      // Wait 2.5s before first poll attempt — server's `sleep 1` + `make stop-*` need time
-      setTimeout(tryReload, 2500);
-    });
-  })();
-</script>
+<script src="/static/admin.js" defer></script>
 <div id="app">
   <div style="position:relative;">
     <div id="map"></div>
@@ -1006,6 +959,9 @@ function connectWS() {
 }
 
 function handleMessage(m) {
+  // Admin overlay (restart / update / health pills) handles its own
+  // events first. If it returns true the page-level switch is skipped.
+  if (window.PikminAdmin && window.PikminAdmin.handle(m)) return;
   switch (m.type) {
     case 'hello':
       setDevice(m.device);

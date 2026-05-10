@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import subprocess
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -401,6 +402,17 @@ class DeviceSession:
         # Idle tracking for auto-shutdown
         self.last_activity: float = 0.0
         self.active_ws: int = 0
+        # Active WebSocket connections — used to broadcast lifecycle events
+        # (server_shutdown, device_disconnected, update_available) and to
+        # close cleanly during lifespan teardown so clients see a graceful
+        # close frame instead of ECONNRESET.
+        self.ws_clients: set[WebSocket] = set()
+        # Health-ping state. The probe writes the cached last_position back
+        # to the phone (no-op since coords are identical) every HEALTH_PING_S
+        # seconds; two consecutive failures flips device_alive=False and
+        # triggers a broadcast to all clients.
+        self.device_alive: bool = False
+        self._health_failures: int = 0
         # Last coordinate we successfully pushed to the phone. The iOS
         # simulate-location service is write-only, so this cache is the
         # only way the UI can answer "where is the device right now?".
@@ -457,10 +469,51 @@ class DeviceSession:
             try:
                 await self.connect()
                 print(f"✓ reconnected: {self.udid} via {self.path}")
+                # Flip the global "device alive" flag and tell every UI
+                # client. Without this broadcast, callers who go through
+                # set_location's retry loop (e.g., teleport after wake)
+                # would silently fix the channel but the top-right pill
+                # would stay red until the next health-ping happens to
+                # notice — confusing because actions clearly worked.
+                self.device_alive = True
+                self._health_failures = 0
+                try:
+                    await _broadcast({"type": "device_connected"})
+                except Exception:
+                    pass
                 return True
             except Exception as e:
                 print(f"✗ reconnect failed: {e}")
                 return False
+
+    # Bounded wait for the iOS RemoteService write. If the wifi tunnel is
+    # half-dead the underlying socket can hang forever — this caps it so
+    # cancellation/shutdown stays prompt and the smart-restart probe can
+    # detect a stuck channel.
+    LOC_SIM_TIMEOUT = 5.0
+
+    async def mark_dead(self, reason: str) -> None:
+        """Flip device into the 'disconnected' state RIGHT NOW.
+
+        Called from any user-facing op that hit a closed channel and
+        couldn't recover via reconnect. Without this, ``device_alive``
+        stays True until the next health-ping notices (up to 2×60s
+        after the device actually went away) — so the UI green dot
+        keeps lying. Calling this gives the UI an immediate red.
+
+        Also drops ``loc_sim`` so the health-ping loop's reconnect
+        branch activates on the next tick (15s) instead of probing a
+        socket that's already dead.
+        """
+        if not self.device_alive:
+            return  # already known dead; don't spam broadcasts
+        self.device_alive = False
+        self.loc_sim = None
+        self._health_failures = 0
+        try:
+            await _broadcast({"type": "device_disconnected", "reason": reason})
+        except Exception:
+            pass
 
     async def set_location(self, lat: float, lon: float) -> None:
         """Push a coordinate to the phone. Auto-reconnects on failure."""
@@ -468,7 +521,7 @@ class DeviceSession:
             try:
                 if self.loc_sim is None:
                     raise ConnectionError("not connected")
-                await self.loc_sim.set(lat, lon)
+                await asyncio.wait_for(self.loc_sim.set(lat, lon), timeout=self.LOC_SIM_TIMEOUT)
                 self.last_position = (lat, lon)
                 _save_position(self.last_position)
                 return
@@ -476,8 +529,10 @@ class DeviceSession:
                 if attempt == 0:
                     print(f"set_location failed ({e}), attempting reconnect...")
                     if not await self.reconnect():
+                        await self.mark_dead(str(e))
                         raise
                 else:
+                    await self.mark_dead(str(e))
                     raise
 
     async def clear_location(self) -> None:
@@ -485,7 +540,7 @@ class DeviceSession:
             try:
                 if self.loc_sim is None:
                     raise ConnectionError("not connected")
-                await self.loc_sim.clear()
+                await asyncio.wait_for(self.loc_sim.clear(), timeout=self.LOC_SIM_TIMEOUT)
                 self.last_position = None
                 _save_position(None)
                 return
@@ -493,8 +548,10 @@ class DeviceSession:
                 if attempt == 0:
                     print(f"clear failed ({e}), attempting reconnect...")
                     if not await self.reconnect():
+                        await self.mark_dead(str(e))
                         raise
                 else:
+                    await self.mark_dead(str(e))
                     raise
 
     async def _enter_dvt(self, rsd) -> bool:
@@ -698,6 +755,95 @@ class DeviceSession:
 session = DeviceSession()
 
 
+# --- Broadcast + health-ping ----------------------------------------------
+
+
+async def _broadcast(payload: dict) -> None:
+    """Send a JSON payload to every connected WebSocket client.
+
+    Best-effort: a client whose send fails is silently dropped from the
+    set so a single dead socket can't block the others (or wedge shutdown).
+    """
+    dead: list[WebSocket] = []
+    for ws in list(session.ws_clients):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        session.ws_clients.discard(ws)
+
+
+# Health-ping cadence. When the device is alive we probe every
+# HEALTH_PING_S seconds (a no-op write keeps the wifi tunnel warm and
+# detects half-dead sockets). When the device is dead we drop to a much
+# shorter interval and actively try to RECONNECT — that's how the friend
+# recovers from "page opened before tunneld was up" without touching
+# the terminal: just wait ~15s and the connection comes back on its own.
+HEALTH_PING_S: float = 60.0
+HEALTH_RECONNECT_S: float = 15.0
+HEALTH_PING_FAIL_THRESHOLD: int = 2
+
+
+async def _health_ping_loop() -> None:
+    """Background task: probe device when alive, reconnect when dead."""
+    while True:
+        # Adaptive cadence: aggressive when down, lazy when up.
+        sleep_s = HEALTH_PING_S if session.device_alive else HEALTH_RECONNECT_S
+        try:
+            await asyncio.sleep(sleep_s)
+        except asyncio.CancelledError:
+            return
+
+        # ── Reconnect path ──
+        # No channel at all → try to bring one up. session.reconnect()
+        # is rate-limited internally (min 10s between attempts) so it's
+        # safe to invoke every HEALTH_RECONNECT_S without spamming.
+        if session.loc_sim is None:
+            try:
+                if await session.reconnect():
+                    session.device_alive = True
+                    session._health_failures = 0
+                    print("✓ auto-reconnect succeeded")
+                    await _broadcast({"type": "device_connected"})
+            except Exception as e:
+                print(f"⚠ auto-reconnect failed: {e}")
+            continue
+
+        # ── Probe path ──
+        # Need a position to write back; fresh installs may not have one
+        # yet, in which case there's nothing to probe.
+        if session.last_position is None:
+            continue
+        # Don't fight a running simulation — its own writes are the probe.
+        if session.running_task and not session.running_task.done():
+            session._health_failures = 0
+            if not session.device_alive:
+                session.device_alive = True
+                await _broadcast({"type": "device_connected"})
+            continue
+
+        lat, lon = session.last_position
+        try:
+            await asyncio.wait_for(
+                session.loc_sim.set(lat, lon),
+                timeout=DeviceSession.LOC_SIM_TIMEOUT,
+            )
+            session._health_failures = 0
+            if not session.device_alive:
+                session.device_alive = True
+                await _broadcast({"type": "device_connected"})
+        except Exception as e:
+            session._health_failures += 1
+            print(f"⚠ health-ping failed ({session._health_failures}/{HEALTH_PING_FAIL_THRESHOLD}): {e}")
+            if session._health_failures >= HEALTH_PING_FAIL_THRESHOLD and session.device_alive:
+                session.device_alive = False
+                # Drop loc_sim so the next loop iteration falls into the
+                # reconnect branch instead of probing a dead socket.
+                session.loc_sim = None
+                await _broadcast({"type": "device_disconnected", "reason": str(e)})
+
+
 # --- HTTP routes ----------------------------------------------------------
 
 
@@ -835,38 +981,368 @@ async def categories_patch(request):
     return JSONResponse(_bookmarks_response(shared))
 
 
-async def admin_restart(request):
-    """Trigger `make restart-{ipad|iphone}` via a detached shell.
+# ─── Smart restart ────────────────────────────────────────────────────────
+#
+# The user-facing "restart" button has one job: get the friend back to a
+# working state. That looks different depending on what's actually broken:
+#
+#   * Server bug / stale state         → restart server only (fast path)
+#   * Wifi tunnel hung (loc_sim stuck) → bounce tunneld AS WELL, because
+#                                        the dead tunnel is upstream of us
+#                                        and won't recover on server restart
+#
+# We probe `loc_sim.set(last_position)` with a tight 2s timeout to tell
+# the two apart. The probe is a no-op write (same coords as cached), so
+# nothing visible happens to the phone if the tunnel is fine.
+#
+# When this server is run by launchd (LaunchAgent for the friend's
+# install), we use `launchctl kickstart -k`:
+#   - `gui/<uid>/com.pikmin.walker[.<port>]` for the server (no sudo)
+#   - `system/com.pikmin.tunneld`            for tunneld   (needs sudo,
+#                                                          NOPASSWD via
+#                                                          /etc/sudoers.d)
+# Otherwise (dev mode) we fall through to `make restart-*` and
+# `sudo pkill -f tunneld`.
 
-    The server kills itself when the make target runs `stop-*`, then the
-    detached shell continues and runs `start-*` to bring it back. The endpoint
-    returns 200 immediately so the client can poll the port for the new server.
+
+def _detect_launchd_label() -> str | None:
+    """Return our LaunchAgent label if launchd started us, else None.
+
+    launchd injects ``XPC_SERVICE_NAME=<Label>`` into the child env, so
+    the presence (and pikmin-prefix) of that var is the ground truth.
     """
-    # Reject cross-origin requests (mild CSRF guard for a localhost tool)
+    label = os.environ.get("XPC_SERVICE_NAME", "")
+    if label.startswith("com.pikmin.walker"):
+        return label
+    return None
+
+
+async def _probe_tunnel_dead() -> bool:
+    """Decide whether the smart restart should also bounce tunneld.
+
+    Three outcomes:
+
+    1. ``device_alive=False`` — already known dead (mark_dead fired, or
+       cold-start before any successful connection). tunneld is the most
+       likely culprit either way; bouncing is safe (no-op if it's not
+       running) and helpful (clears any stale tunnel state).
+
+    2. ``device_alive=True`` + can probe — write last_position back
+       through loc_sim with a 2s budget. Timeout / error → tunnel is
+       half-dead → bounce.
+
+    3. ``device_alive=True`` + nothing to probe (no last_position yet)
+       — assume healthy, just restart server.
+    """
+    # Case 1: known dead → bounce tunneld.
+    if not session.device_alive:
+        return True
+
+    # Case 3: alive but no probe payload available.
+    if session.loc_sim is None or session.last_position is None:
+        return False
+
+    # Case 2: alive — actively probe the channel.
+    lat, lon = session.last_position
+    try:
+        await asyncio.wait_for(session.loc_sim.set(lat, lon), timeout=2.0)
+        return False
+    except Exception:
+        return True
+
+
+def _build_restart_command(*, tunnel_dead: bool, launchd_label: str | None) -> str:
+    """Compose the detached shell command that does the actual restart.
+
+    The shell sleeps briefly so the HTTP response can flush before the
+    server gets killed. `setsid` (start_new_session) is set on Popen so
+    the shell survives our death.
+    """
+    parts: list[str] = ["sleep 1"]
+
+    if launchd_label is not None:
+        # Production path: launchd-managed.
+        if tunnel_dead:
+            parts.append(
+                "sudo /bin/launchctl kickstart -k system/com.pikmin.tunneld || true"
+            )
+            parts.append("sleep 2")  # let tunneld come back up
+        uid = os.getuid()
+        parts.append(
+            f"/bin/launchctl kickstart -k gui/{uid}/{launchd_label}"
+        )
+    else:
+        # Dev path: Makefile-managed.
+        if tunnel_dead:
+            parts.append(
+                'sudo /usr/bin/pkill -f "pymobiledevice3.*tunneld" || true'
+            )
+            parts.append("sleep 1")
+
+        if RUNTIME_PORT == 7766:
+            target = "restart-ipad"
+        elif RUNTIME_PORT == 7767:
+            target = "restart-iphone"
+        elif RUNTIME_PORT == 7770:
+            target = "restart-iphone2"
+        else:
+            target = "restart"
+        parts.append(f'cd "{HERE}" && /usr/bin/make {target}')
+
+    body = " && ".join(parts)
+    return f"({body}) > /tmp/pikmin-restart.log 2>&1 &"
+
+
+async def admin_restart(request):
+    """Smart restart: probe tunnel, then bounce server (and tunneld if hung).
+
+    Response is sent immediately so the front-end can switch to "polling
+    for the new server" mode while the detached shell does the work.
+    """
     origin = request.headers.get("origin", "")
     host = request.headers.get("host", "")
     if origin and host and not origin.endswith(host):
         return JSONResponse({"error": "cross-origin not allowed"}, status_code=403)
 
-    if RUNTIME_PORT == 7766:
-        target = "restart-ipad"
-    elif RUNTIME_PORT == 7767:
-        target = "restart-iphone"
-    else:
-        target = "restart"
+    tunnel_dead = await _probe_tunnel_dead()
+    launchd_label = _detect_launchd_label()
+    cmd = _build_restart_command(tunnel_dead=tunnel_dead, launchd_label=launchd_label)
 
-    # Detached shell: `setsid` so it survives our death; sleep gives us time
-    # to finish responding before make stop-* kills us.
-    cmd = (
-        f'(sleep 1 && cd "{HERE}" && /usr/bin/make {target} '
-        f'> /tmp/pikmin-restart.log 2>&1) &'
+    subprocess.Popen(
+        cmd, shell=True, start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=str(HERE),
+    )
+    return JSONResponse({
+        "ok": True,
+        "tunnel_dead": tunnel_dead,
+        "via": "launchd" if launchd_label else "make",
+        "port": RUNTIME_PORT,
+    })
+
+
+async def admin_health(request):
+    """Lightweight liveness snapshot for the front-end status pill."""
+    return JSONResponse({
+        "device_alive": session.device_alive,
+        "loc_sim": session.loc_sim is not None,
+        "path": session.path,
+        "udid": session.udid,
+        "running_task": bool(session.running_task and not session.running_task.done()),
+        "active_ws": session.active_ws,
+    })
+
+
+# ─── Git update ───────────────────────────────────────────────────────────
+#
+# Surfaces "git pull --ff-only" through the web UI so the friend can apply
+# bug fixes by clicking a button. Two endpoints:
+#
+#   GET  /api/update/check   `git fetch` + compare HEAD vs origin/main.
+#                            Reports up-to-date, dirty, fast-forward-able,
+#                            and the pending commit list.
+#
+#   POST /api/update/apply   re-checks, refuses if dirty / non-ff, runs
+#                            `git pull --ff-only`, then triggers the
+#                            existing smart-restart flow.
+#
+# A background poller calls /check every UPDATE_POLL_S seconds and pushes
+# `update_available` over WebSocket when new commits land — friend sees a
+# red dot in the corner without having to manually check.
+#
+# Failure policy: conservative. Anything ambiguous (dirty tree, diverged
+# branch, network error) → refuse with a human-readable message. The
+# admin (you, over SSH) handles edge cases manually.
+
+UPDATE_BRANCH: str = "origin/main"
+UPDATE_LOCAL_BRANCH: str = "main"
+UPDATE_POLL_S: float = 1800.0  # 30 minutes
+_update_lock = asyncio.Lock()
+
+
+async def _git_run(*args: str, timeout: float = 30.0) -> tuple[int, str, str]:
+    """Run `git <args>` in the project dir with a hard timeout (no shell).
+
+    Returns (returncode, stdout, stderr) all as text. On timeout the
+    subprocess is killed and rc=-1 with stderr explaining.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        cwd=str(HERE),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return -1, "", f"git {args[0]} timed out after {timeout}s"
+    return proc.returncode or 0, out.decode("utf-8", "replace").strip(), err.decode("utf-8", "replace").strip()
+
+
+async def _git_status_summary() -> dict:
+    """Snapshot enough git state to decide if pull is safe.
+
+    Includes: current HEAD, remote tip, dirty flag (with file list),
+    fast-forward feasibility, and the list of commits we'd be pulling
+    in. Performs a network `git fetch` — call sparingly.
+    """
+    rc, _, fetch_err = await _git_run("fetch", "--quiet", "origin", UPDATE_LOCAL_BRANCH, timeout=15.0)
+    if rc != 0:
+        return {"error": "fetch_failed", "detail": fetch_err or "unknown"}
+
+    _, local, _ = await _git_run("rev-parse", "HEAD")
+    _, remote, _ = await _git_run("rev-parse", UPDATE_BRANCH)
+
+    if local == remote:
+        return {
+            "up_to_date": True,
+            "current": local,
+            "current_short": local[:7],
+        }
+
+    # Is HEAD an ancestor of origin/main? — if yes, plain ff-pull works.
+    rc_ff, _, _ = await _git_run("merge-base", "--is-ancestor", "HEAD", UPDATE_BRANCH)
+    fast_forward = rc_ff == 0
+
+    # Dirty tree blocks ff-only pull on changed-tracked files.
+    _, status_out, _ = await _git_run("status", "--porcelain", "--untracked-files=no")
+    dirty = bool(status_out.strip())
+
+    # Commit list (newest first) — for the confirmation dialog.
+    _, log_out, _ = await _git_run(
+        "log", "--pretty=format:%h\t%s",
+        f"HEAD..{UPDATE_BRANCH}",
+    )
+    commits = []
+    for line in log_out.splitlines():
+        if "\t" in line:
+            sha, subject = line.split("\t", 1)
+            commits.append({"sha": sha, "subject": subject})
+
+    return {
+        "up_to_date": False,
+        "current": local,
+        "current_short": local[:7],
+        "latest": remote,
+        "latest_short": remote[:7],
+        "fast_forward": fast_forward,
+        "dirty": dirty,
+        "dirty_files": status_out.splitlines() if dirty else [],
+        "commits": commits,
+        "count": len(commits),
+    }
+
+
+async def update_check(request):
+    """Check for updates without applying them. Network ~1-3s."""
+    summary = await _git_status_summary()
+    return JSONResponse(summary)
+
+
+async def update_apply(request):
+    """Apply pending updates if safe, then trigger smart restart.
+
+    Refuses on: network error, non-fast-forward, dirty tree, no updates.
+    """
+    origin = request.headers.get("origin", "")
+    host = request.headers.get("host", "")
+    if origin and host and not origin.endswith(host):
+        return JSONResponse({"error": "cross-origin not allowed"}, status_code=403)
+
+    # Serialize so two simultaneous clicks can't double-pull.
+    if _update_lock.locked():
+        return JSONResponse({"error": "update_in_progress"}, status_code=409)
+
+    async with _update_lock:
+        summary = await _git_status_summary()
+        if summary.get("error"):
+            return JSONResponse(
+                {"error": summary["error"], "detail": summary.get("detail", "")},
+                status_code=502,
+            )
+        if summary.get("up_to_date"):
+            return JSONResponse({"ok": True, "up_to_date": True, "current": summary["current_short"]})
+        if summary.get("dirty"):
+            return JSONResponse(
+                {"error": "dirty_tree", "files": summary["dirty_files"]},
+                status_code=409,
+            )
+        if not summary.get("fast_forward"):
+            return JSONResponse(
+                {"error": "non_fast_forward",
+                 "current": summary["current_short"],
+                 "latest": summary["latest_short"]},
+                status_code=409,
+            )
+
+        rc, out, err = await _git_run(
+            "pull", "--ff-only", "origin", UPDATE_LOCAL_BRANCH, timeout=30.0,
+        )
+        if rc != 0:
+            return JSONResponse(
+                {"error": "pull_failed", "detail": err or out},
+                status_code=500,
+            )
+
+    # Pull succeeded — trigger restart through the existing smart-restart
+    # path so the new code actually loads. Re-uses _build_restart_command
+    # so launchd vs make routing stays consistent.
+    tunnel_dead = False  # pull doesn't touch the tunnel; assume healthy
+    cmd = _build_restart_command(
+        tunnel_dead=tunnel_dead,
+        launchd_label=_detect_launchd_label(),
     )
     subprocess.Popen(
         cmd, shell=True, start_new_session=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(HERE),
     )
-    return JSONResponse({"ok": True, "target": target, "port": RUNTIME_PORT})
+
+    # Re-read HEAD so the response reflects the post-pull state.
+    _, new_head, _ = await _git_run("rev-parse", "HEAD")
+    return JSONResponse({
+        "ok": True,
+        "applied": True,
+        "previous": summary["current_short"],
+        "current": new_head[:7],
+        "count": summary["count"],
+    })
+
+
+# Background poller state — last result cached so the badge can persist
+# across WS reconnects without needing another network call.
+_last_update_summary: dict | None = None
+
+
+async def _update_poll_loop() -> None:
+    """Background task: poll for updates, broadcast availability."""
+    global _last_update_summary
+    # Brief warm-up so we don't fetch on cold-start (server still settling).
+    try:
+        await asyncio.sleep(60.0)
+    except asyncio.CancelledError:
+        return
+
+    while True:
+        try:
+            summary = await _git_status_summary()
+            _last_update_summary = summary
+            if not summary.get("error") and not summary.get("up_to_date"):
+                await _broadcast({
+                    "type": "update_available",
+                    "count": summary.get("count", 0),
+                    "latest": summary.get("latest_short", ""),
+                    "commits": summary.get("commits", []),
+                })
+        except Exception as e:
+            print(f"⚠ update poll failed: {e}")
+
+        try:
+            await asyncio.sleep(UPDATE_POLL_S)
+        except asyncio.CancelledError:
+            return
 
 
 async def categories_delete(request):
@@ -1047,10 +1523,16 @@ async def profiles_endpoint(request):
 async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     session.active_ws += 1
+    session.ws_clients.add(websocket)
     session.touch()
     # Auto-reconnect if device dropped (screen off, USB unplug, etc)
     if session.loc_sim is None:
         await session.reconnect()
+    # Reflect actual reachability — `loc_sim is not None` only means we
+    # built the channel object; health-ping is the source of truth for
+    # whether the wifi tunnel is currently alive.
+    if session.loc_sim is not None and not session.device_alive:
+        session.device_alive = True
     await websocket.send_json(
         {
             "type": "hello",
@@ -1063,6 +1545,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 if session.loc_sim is not None
                 else None
             ),
+            "device_alive": session.device_alive,
             "last_position": (
                 {"lat": session.last_position[0], "lon": session.last_position[1]}
                 if session.last_position is not None
@@ -1114,6 +1597,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         await session.stop_runner()
     finally:
+        session.ws_clients.discard(websocket)
         session.active_ws = max(0, session.active_ws - 1)
         session.touch()
 
@@ -1660,25 +2144,63 @@ async def lifespan(app):
 
     try:
         await session.connect()
+        session.device_alive = True
         print(f"✓ device connected: {session.udid} ({session.product}) via {session.path}")
     except Exception as e:
+        session.device_alive = False
         print(f"⚠ could not connect to device: {e}")
         print("  iOS 17+ : sudo pymobiledevice3 remote tunneld")
         print("  iOS ≤16 : enable Developer Mode on the phone + mount DDI")
 
-    # Start watchdog
+    # Start watchdogs
     session.last_activity = asyncio.get_event_loop().time()
     watchdog = asyncio.create_task(_idle_watchdog())
+    health_ping = asyncio.create_task(_health_ping_loop())
+    update_poll = asyncio.create_task(_update_poll_loop())
 
     yield
 
-    watchdog.cancel()
+    # Lifespan teardown is bound by tight timeouts: under launchd
+    # ExitTimeOut=15 we must finish well within that, and `make
+    # restart-*` waits for our port to free before starting the new
+    # server — every second here delays the friend's "are we back yet?"
+    # poll. Worst case total: 1 + 0.5*N + 3 ≈ 4-5s for typical setups.
+
+    # 1. Notify clients before pulling the rug.
     try:
-        await watchdog
-    except (asyncio.CancelledError, Exception):
+        await asyncio.wait_for(
+            _broadcast({"type": "server_shutdown"}),
+            timeout=1.0,
+        )
+    except Exception:
         pass
-    await session.close()
-    print("✓ closed device session")
+
+    # 2. Cancel background tasks first so they don't fight teardown.
+    for t in (watchdog, health_ping, update_poll):
+        t.cancel()
+        try:
+            await asyncio.wait_for(t, timeout=0.5)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+
+    # 3. Close WS connections — 0.5s each, in parallel so N clients
+    #    can't blow our budget linearly.
+    if session.ws_clients:
+        await asyncio.gather(
+            *(asyncio.wait_for(ws.close(code=1001), timeout=0.5)
+              for ws in list(session.ws_clients)),
+            return_exceptions=True,
+        )
+    session.ws_clients.clear()
+
+    # 4. Tear down the device session. 3s is plenty for healthy
+    #    DVT/lockdown close — anything longer is a dead socket and we
+    #    let the OS reap it post-exit.
+    try:
+        await asyncio.wait_for(session.close(), timeout=3.0)
+        print("✓ closed device session")
+    except asyncio.TimeoutError:
+        print("⚠ device session close timed out — forcing exit")
 
 
 app = Starlette(
@@ -1700,6 +2222,9 @@ app = Starlette(
         Route("/api/bookmark-categories/{name}", categories_patch, methods=["PATCH"]),
         Route("/api/bookmark-categories/{name}", categories_delete, methods=["DELETE"]),
         Route("/api/admin/restart", admin_restart, methods=["POST"]),
+        Route("/api/admin/health", admin_health, methods=["GET"]),
+        Route("/api/update/check", update_check, methods=["GET"]),
+        Route("/api/update/apply", update_apply, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ],

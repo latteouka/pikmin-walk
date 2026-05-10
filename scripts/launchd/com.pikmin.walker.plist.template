@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Pikmin Walker — LaunchAgent template.
+
+  Substituted at install time by scripts/install.sh:
+    __UV_PATH__       absolute path to `uv` (e.g. /Users/foo/.local/bin/uv)
+    __PROJECT_DIR__   absolute path to the cloned repo
+    __USER_HOME__     $HOME of the user this agent runs as
+    __PORT__          HTTP port (default 7766)
+
+  Lifecycle:
+    KeepAlive Crashed=true → restart only on non-zero exit, so
+        --idle-minutes=0 (no self-shutdown) means launchd never thrashes.
+    ThrottleInterval=10    → 10s minimum between restart attempts; if
+        we crash-loop in <10s launchd backs off.
+    ExitTimeOut=15         → 15s grace after SIGTERM before SIGKILL,
+        long enough for lifespan teardown to flush state + close sockets.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pikmin.walker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__UV_PATH__</string>
+        <string>run</string>
+        <string>--quiet</string>
+        <string>server.py</string>
+        <string>--port</string>
+        <string>__PORT__</string>
+        <string>--idle-minutes=0</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_DIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ExitTimeOut</key>
+    <integer>15</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pikmin-walker.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/pikmin-walker.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__USER_HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__USER_HOME__</string>
+    </dict>
+</dict>
+</plist>

@@ -2,7 +2,8 @@
         kill-tunnel clear logs help \
         start-ipad start-iphone start-iphone2 stop-ipad stop-iphone stop-iphone2 \
         restart-ipad restart-iphone restart-iphone2 mount-iphone-ddi mount-iphone2-ddi \
-        status-all list-devices
+        status-all list-devices \
+        install-friend daemon-install daemon-uninstall daemon-status
 
 # Per-machine overrides (device UDIDs etc). The file is gitignored — copy
 # Makefile.local.example or run `make list-devices` to get your UDIDs.
@@ -26,6 +27,21 @@ help: ## Show this help
 
 install: ## One-time setup on macOS (uv + pymobiledevice3 + 裝置 checklist)
 	@bash scripts/install.sh
+
+install-friend: ## 朋友機器一鍵安裝（install + sudoers + launchd auto-start）
+	@bash scripts/install-friend.sh
+
+daemon-install: ## 只裝 LaunchAgent + LaunchDaemon（前提：install + setup-sudo 已跑過）
+	@bash scripts/launchd/install-launchd.sh
+
+daemon-uninstall: ## 解除 LaunchAgent + LaunchDaemon
+	@bash scripts/launchd/uninstall-launchd.sh
+
+daemon-status: ## 顯示兩個 launchd 服務的狀態
+	@echo "== LaunchAgent (com.pikmin.walker) =="
+	@launchctl print "gui/$$(id -u)/com.pikmin.walker" 2>/dev/null | grep -E "(state|last exit)" | sed 's/^/  /' || echo "  not loaded"
+	@echo "== LaunchDaemon (com.pikmin.tunneld) =="
+	@sudo launchctl print system/com.pikmin.tunneld 2>/dev/null | grep -E "(state|last exit)" | sed 's/^/  /' || echo "  not loaded"
 
 setup-sudo: ## Install sudoers rule so tunneld no longer prompts for password
 	@bash scripts/setup_sudo.sh
@@ -56,11 +72,30 @@ start: tunnel ## Start server (auto-detect device, port 7766)
 		echo "✗ server failed after 15s — check: cat /tmp/pikmin-server.log"; \
 	fi
 
-stop: ## Stop all servers
-	@pkill -f "uv run server.py" 2>/dev/null && echo "✓ servers stopped" || echo "no server running"
+# Stop targets kill by listening port (reliable) instead of pkill -f
+# matching the cmdline, because `uv run server.py` execs into python and
+# the actual process's cmdline becomes `python server.py …` — pkill
+# wouldn't see "uv run" any more and would silently fail to kill.
+define KILL_PORT
+	@PIDS=$$(lsof -t -iTCP:$(1) -sTCP:LISTEN 2>/dev/null); \
+	if [ -n "$$PIDS" ]; then \
+		kill $$PIDS 2>/dev/null; \
+		echo "✓ stopped on :$(1) (pid $$PIDS)"; \
+	else \
+		echo "  (nothing on :$(1))"; \
+	fi
+endef
+
+stop: ## Stop all pikmin servers (by port)
+	$(call KILL_PORT,$(IPAD_PORT))
+	$(call KILL_PORT,$(IPHONE_PORT))
+	$(call KILL_PORT,$(IPHONE2_PORT))
 
 restart: stop ## Restart default server
-	@sleep 1
+	@for i in $$(seq 1 24); do \
+		lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
 	@$(MAKE) start
 
 # ─── Multi-device targets ────────────────────────────────────────────────
@@ -129,24 +164,37 @@ start-iphone2: mount-iphone2-ddi ## Start iPhone-2 server on port 7770 (auto-mou
 	fi
 
 stop-ipad: ## Stop iPad server only
-	@pkill -f "server.py --port $(IPAD_PORT)" 2>/dev/null && echo "✓ iPad stopped" || echo "not running"
+	$(call KILL_PORT,$(IPAD_PORT))
 
 stop-iphone: ## Stop iPhone server only
-	@pkill -f "server.py --port $(IPHONE_PORT)" 2>/dev/null && echo "✓ iPhone stopped" || echo "not running"
+	$(call KILL_PORT,$(IPHONE_PORT))
 
 stop-iphone2: ## Stop iPhone-2 server only
-	@pkill -f "server.py --port $(IPHONE2_PORT)" 2>/dev/null && echo "✓ iPhone-2 stopped" || echo "not running"
+	$(call KILL_PORT,$(IPHONE2_PORT))
 
+# wait-for-port helper: poll up to 12s for the port to free after
+# stop-*. Necessary because graceful shutdown (broadcast + DVT close)
+# can take 3-5s — `sleep 1` is not enough and start-* would see the
+# port still bound and bail without starting a new server.
 restart-ipad: stop-ipad ## Restart iPad server
-	@sleep 1
+	@for i in $$(seq 1 24); do \
+		lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
 	@$(MAKE) start-ipad
 
 restart-iphone: stop-iphone ## Restart iPhone server
-	@sleep 1
+	@for i in $$(seq 1 24); do \
+		lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
 	@$(MAKE) start-iphone
 
 restart-iphone2: stop-iphone2 ## Restart iPhone-2 server
-	@sleep 1
+	@for i in $$(seq 1 24); do \
+		lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
 	@$(MAKE) start-iphone2
 
 restart-all: stop ## Restart all servers
@@ -172,19 +220,27 @@ osrm-down: ## Stop OSRM containers
 
 # ─── Shared ──────────────────────────────────────────────────────────────
 
+# pymobiledevice3 absolute path — must match the sudoers rule built by
+# scripts/setup_sudo.sh. Bare `pymobiledevice3` would resolve via PATH,
+# which when invoked from server.py's `uv run` venv finds the venv copy
+# (different absolute path) and sudo's NOPASSWD rule no longer matches
+# → sudo silently asks for password → smart-restart sudo fails with no
+# tty → tunneld never comes back up.
+PMD := $(HOME)/.local/bin/pymobiledevice3
+
 tunnel: ## Start tunneld if not running (sudo, iOS 17+ only)
 	@if pgrep -f "pymobiledevice3.*tunneld" >/dev/null 2>&1; then \
 		echo "✓ tunneld already running"; \
 	else \
 		echo "starting tunneld (needs sudo)..."; \
-		sudo nohup pymobiledevice3 remote tunneld > /tmp/pikmin-tunneld.log 2>&1 & \
+		sudo $(PMD) remote tunneld </dev/null > /tmp/pikmin-tunneld.log 2>&1 & \
 		sleep 3; \
 		pgrep -f "pymobiledevice3.*tunneld" >/dev/null 2>&1 && \
-			echo "✓ tunneld up" || echo "✗ tunneld failed"; \
+			echo "✓ tunneld up" || echo "✗ tunneld failed (cat /tmp/pikmin-tunneld.log)"; \
 	fi
 
 kill-tunnel: ## Stop tunneld
-	@sudo pkill -f "pymobiledevice3.*tunneld" 2>/dev/null && echo "✓ tunneld stopped" || echo "not running"
+	@sudo /usr/bin/pkill -f "pymobiledevice3.*tunneld" 2>/dev/null && echo "✓ tunneld stopped" || echo "not running"
 
 cleanup: ## Stop EVERYTHING (servers + tunneld + OSRM containers)
 	@pkill -f "uv run server.py" 2>/dev/null && echo "✓ servers" || echo "  (no servers)"
