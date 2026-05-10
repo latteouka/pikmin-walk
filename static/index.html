@@ -86,6 +86,13 @@
       margin: 0;
       letter-spacing: 0.08em;
     }
+    /* Use ID-prefixed selectors so we beat Tailwind CDN preflight,
+       which otherwise resets button/select font-size to 100% (= 16px). */
+    #side select, #side button, #side input,
+    #bookmarks-pane select, #bookmarks-pane button, #bookmarks-pane input {
+      font-size: 14px;
+      font-family: inherit;
+    }
     select, button {
       width: 100%;
       padding: 10px 12px;
