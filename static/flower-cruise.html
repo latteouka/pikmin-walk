@@ -799,5 +799,22 @@ connectWS();
   header.addEventListener('pointercancel', endDrag);
 })();
 </script>
+<script>
+  // Persist flowersText across reloads
+  (function() {
+    const ta = document.getElementById('flowersText');
+    if (!ta) return;
+    const KEY = 'pikmin.flowerCruise.flowersText';
+    let t;
+    const save = () => { clearTimeout(t); t = setTimeout(() => {
+      try { localStorage.setItem(KEY, ta.value); } catch {}
+    }, 300); };
+    ta.addEventListener('input', save);
+    try {
+      const v = localStorage.getItem(KEY);
+      if (v && !ta.value) ta.value = v;
+    } catch {}
+  })();
+</script>
 </body>
 </html>

@@ -784,8 +784,24 @@ document.getElementById('jumpInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); handleJumpInput(); }
 });
 
-// Temporary stub; replaced by real localStorage helper in Task 8
-const storage = { get: (_k, fb = '') => fb, set: () => {} };
+const storage = {
+  get(key, fallback = '') {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch {}
+  },
+  debounce(fn, ms = 200) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  },
+};
+
+// Persist jumpInput across reloads
+const $jumpInput = document.getElementById('jumpInput');
+const saveJumpInput = storage.debounce(() => storage.set('pikmin.jumpInput', $jumpInput.value), 200);
+$jumpInput.addEventListener('input', saveJumpInput);
+$jumpInput.value = storage.get('pikmin.jumpInput', '');
 
 //
 // ---- Bookmarks state + UI ----
@@ -804,7 +820,7 @@ function applyBookmarkState(state) {
 
 function refreshCategoryFilter() {
   const sel = document.getElementById('categoryFilter');
-  const prev = sel.value || storage.get('pikmin.bookmarkCategoryFilter', ALL_FILTER);
+  const prev = storage.get('pikmin.bookmarkCategoryFilter', '') || sel.value || ALL_FILTER;
   sel.replaceChildren();
   const all = document.createElement('option');
   all.value = ALL_FILTER; all.textContent = `全部 (${bookmarkState.bookmarks.length})`;
@@ -825,7 +841,7 @@ function refreshCategoryFilter() {
 
 function refreshAddCategoryDropdown() {
   const sel = document.getElementById('bookmarkAddCategory');
-  const prev = sel.value || storage.get('pikmin.lastSelectedCategory', DEFAULT_CATEGORY);
+  const prev = storage.get('pikmin.lastSelectedCategory', '') || sel.value || DEFAULT_CATEGORY;
   sel.replaceChildren();
   bookmarkState.categories.forEach(cat => {
     const opt = document.createElement('option');
