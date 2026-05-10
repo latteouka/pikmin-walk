@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import subprocess
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,7 @@ STATIC_DIR = HERE / "static"
 # Per-device state (last_position, last_wifi_host): state-<udid>.json
 # Shared state (bookmarks, google_maps_api_key): shared.json
 TARGET_UDID: str | None = None
+RUNTIME_PORT: int = 7766
 STATE_FILE: Path = HERE / "state.json"
 SHARED_FILE: Path = HERE / "shared.json"
 
@@ -831,6 +833,40 @@ async def categories_patch(request):
             bk["category"] = new_name
     _write_shared(shared)
     return JSONResponse(_bookmarks_response(shared))
+
+
+async def admin_restart(request):
+    """Trigger `make restart-{ipad|iphone}` via a detached shell.
+
+    The server kills itself when the make target runs `stop-*`, then the
+    detached shell continues and runs `start-*` to bring it back. The endpoint
+    returns 200 immediately so the client can poll the port for the new server.
+    """
+    # Reject cross-origin requests (mild CSRF guard for a localhost tool)
+    origin = request.headers.get("origin", "")
+    host = request.headers.get("host", "")
+    if origin and host and not origin.endswith(host):
+        return JSONResponse({"error": "cross-origin not allowed"}, status_code=403)
+
+    if RUNTIME_PORT == 7766:
+        target = "restart-ipad"
+    elif RUNTIME_PORT == 7767:
+        target = "restart-iphone"
+    else:
+        target = "restart"
+
+    # Detached shell: `setsid` so it survives our death; sleep gives us time
+    # to finish responding before make stop-* kills us.
+    cmd = (
+        f'(sleep 1 && cd "{HERE}" && /usr/bin/make {target} '
+        f'> /tmp/pikmin-restart.log 2>&1) &'
+    )
+    subprocess.Popen(
+        cmd, shell=True, start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=str(HERE),
+    )
+    return JSONResponse({"ok": True, "target": target, "port": RUNTIME_PORT})
 
 
 async def categories_delete(request):
@@ -1663,6 +1699,7 @@ app = Starlette(
         Route("/api/bookmark-categories", categories_post, methods=["POST"]),
         Route("/api/bookmark-categories/{name}", categories_patch, methods=["PATCH"]),
         Route("/api/bookmark-categories/{name}", categories_delete, methods=["DELETE"]),
+        Route("/api/admin/restart", admin_restart, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ],
@@ -1680,6 +1717,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     TARGET_UDID = args.udid
+    RUNTIME_PORT = args.port
     IDLE_MINUTES = args.idle_minutes
     if TARGET_UDID:
         # Separate state file per device so bookmarks/last_position don't collide

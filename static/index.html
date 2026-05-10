@@ -399,6 +399,11 @@
        class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
       🚶 道路漫步
     </a>
+    <span aria-hidden="true" class="mx-1 w-px h-5 bg-border"></span>
+    <button id="navRestart" type="button" title="重啟伺服器"
+            class="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+      🔄
+    </button>
   </div>
 </nav>
 <script>
@@ -412,6 +417,171 @@
         a.classList.remove('text-muted-foreground');
         a.classList.add('bg-accent', 'text-foreground');
       }
+    });
+  })();
+</script>
+<script>
+//
+// ---- Modal (shadcn-style replacement for prompt/confirm) ----
+//
+const Modal = {
+  _show({ type, title, description, defaultValue = '', placeholder = '',
+          confirmText = '確定', cancelText = '取消', danger = false }) {
+    return new Promise((resolve) => {
+      const root = document.createElement('div');
+      root.className = 'fixed inset-0 z-[1200] flex items-center justify-center';
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'absolute inset-0 bg-black/60 backdrop-blur-sm';
+
+      const card = document.createElement('div');
+      card.style.cssText = 'position:relative;width:100%;max-width:420px;margin:0 16px;'
+        + 'background:var(--panel);color:var(--text);'
+        + 'border:1px solid var(--border);border-radius:12px;'
+        + 'box-shadow:0 20px 60px rgba(0,0,0,0.55);padding:20px 22px;'
+        + 'font-family:inherit;';
+
+      const titleEl = document.createElement('h3');
+      titleEl.style.cssText = 'margin:0 0 6px 0;font-size:15px;font-weight:600;letter-spacing:-0.01em;';
+      titleEl.textContent = title || '';
+      card.append(titleEl);
+
+      if (description) {
+        const desc = document.createElement('p');
+        desc.style.cssText = 'margin:0 0 14px 0;font-size:13px;color:var(--muted);'
+          + 'line-height:1.5;white-space:pre-wrap;';
+        desc.textContent = description;
+        card.append(desc);
+      } else {
+        card.style.paddingTop = '20px';
+      }
+
+      let input = null;
+      if (type === 'input') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.style.cssText = 'width:100%;height:36px;padding:6px 10px;margin-top:4px;'
+          + 'font-size:14px;font-family:inherit;color:var(--text);'
+          + 'background:var(--panel-2, var(--panel-solid, #334155));border:1px solid var(--border);'
+          + 'border-radius:8px;outline:none;transition:border-color 0.15s;';
+        input.addEventListener('focus', () => { input.style.borderColor = 'var(--accent)'; });
+        input.addEventListener('blur', () => { input.style.borderColor = 'var(--border)'; });
+        if (defaultValue) input.value = defaultValue;
+        if (placeholder) input.placeholder = placeholder;
+        card.append(input);
+      }
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.style.cssText = 'width:auto;padding:8px 16px;font-size:13px;font-weight:500;'
+        + 'color:var(--text);background:transparent;border:1px solid var(--border);'
+        + 'border-radius:8px;cursor:pointer;transition:background 0.15s;';
+      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--panel-2, var(--panel-solid, #334155))'; });
+      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+      cancelBtn.textContent = cancelText;
+
+      const okBtn = document.createElement('button');
+      okBtn.style.cssText = 'width:auto;padding:8px 18px;font-size:13px;font-weight:500;'
+        + 'color:white;border-radius:8px;cursor:pointer;transition:background 0.15s;'
+        + (danger
+            ? 'background:var(--danger);border:1px solid var(--danger);'
+            : 'background:var(--accent);border:1px solid var(--accent);');
+      okBtn.addEventListener('mouseenter', () => {
+        okBtn.style.background = danger ? 'var(--danger-hover, #dc2626)' : 'var(--accent-hover, #2563eb)';
+      });
+      okBtn.addEventListener('mouseleave', () => {
+        okBtn.style.background = danger ? 'var(--danger)' : 'var(--accent)';
+      });
+      okBtn.textContent = confirmText;
+
+      actions.append(cancelBtn, okBtn);
+      card.append(actions);
+
+      root.append(backdrop, card);
+      document.body.append(root);
+
+      const cancelValue = type === 'input' ? null : false;
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKey);
+        root.remove();
+        resolve(result);
+      };
+
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
+        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
+          e.preventDefault();
+          cleanup(type === 'input' ? input.value.trim() : true);
+        }
+      };
+      document.addEventListener('keydown', onKey);
+
+      backdrop.addEventListener('click', () => cleanup(cancelValue));
+      cancelBtn.addEventListener('click', () => cleanup(cancelValue));
+      okBtn.addEventListener('click', () => cleanup(type === 'input' ? input.value.trim() : true));
+
+      setTimeout(() => {
+        if (input) { input.focus(); input.select(); }
+        else { okBtn.focus(); }
+      }, 0);
+    });
+  },
+  input(opts) { return this._show({ type: 'input', ...opts }); },
+  confirm(opts) { return this._show({ type: 'confirm', ...opts }); },
+};
+</script>
+<script>
+  // Server restart trigger — wired to navbar 🔄
+  (function() {
+    const btn = document.getElementById('navRestart');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const ok = await Modal.confirm({
+        title: '重啟伺服器？',
+        description: '伺服器會停下 1-2 秒後自動回來，頁面會自動重新整理。',
+        confirmText: '重啟',
+        danger: true,
+      });
+      if (!ok) return;
+
+      // Fire and forget — server may die before responding
+      fetch('/api/admin/restart', { method: 'POST' }).catch(() => {});
+
+      // Full-screen overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;background:rgba(15,23,42,0.95);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#f1f5f9;font-family:inherit;';
+
+      const spinner = document.createElement('div');
+      spinner.style.cssText = 'font-size:32px;animation:pikmin-spin 1.2s linear infinite;';
+      spinner.textContent = '🔄';
+
+      const title = document.createElement('div');
+      title.style.cssText = 'font-size:16px;font-weight:600;';
+      title.textContent = '重啟伺服器中…';
+
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:13px;color:#94a3b8;';
+      sub.textContent = '就緒後自動重新整理';
+
+      const styleEl = document.createElement('style');
+      styleEl.textContent = '@keyframes pikmin-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }';
+
+      overlay.append(spinner, title, sub, styleEl);
+      document.body.append(overlay);
+
+      // Poll for server to come back
+      const tryReload = async () => {
+        try {
+          const res = await fetch('/api/profiles', { signal: AbortSignal.timeout(2000) });
+          if (res.ok) { location.reload(); return; }
+        } catch {}
+        setTimeout(tryReload, 800);
+      };
+      // Wait 2.5s before first poll attempt — server's `sleep 1` + `make stop-*` need time
+      setTimeout(tryReload, 2500);
     });
   })();
 </script>
@@ -808,118 +978,6 @@ const $jumpInput = document.getElementById('jumpInput');
 const saveJumpInput = storage.debounce(() => storage.set('pikmin.jumpInput', $jumpInput.value), 200);
 $jumpInput.addEventListener('input', saveJumpInput);
 $jumpInput.value = storage.get('pikmin.jumpInput', '');
-
-//
-// ---- Modal (shadcn-style replacement for prompt/confirm) ----
-//
-const Modal = {
-  _show({ type, title, description, defaultValue = '', placeholder = '',
-          confirmText = '確定', cancelText = '取消', danger = false }) {
-    return new Promise((resolve) => {
-      const root = document.createElement('div');
-      root.className = 'fixed inset-0 z-[1200] flex items-center justify-center';
-
-      const backdrop = document.createElement('div');
-      backdrop.className = 'absolute inset-0 bg-black/60 backdrop-blur-sm';
-
-      const card = document.createElement('div');
-      card.style.cssText = 'position:relative;width:100%;max-width:420px;margin:0 16px;'
-        + 'background:var(--panel);color:var(--text);'
-        + 'border:1px solid var(--border);border-radius:12px;'
-        + 'box-shadow:0 20px 60px rgba(0,0,0,0.55);padding:20px 22px;'
-        + 'font-family:inherit;';
-
-      const titleEl = document.createElement('h3');
-      titleEl.style.cssText = 'margin:0 0 6px 0;font-size:15px;font-weight:600;letter-spacing:-0.01em;';
-      titleEl.textContent = title || '';
-      card.append(titleEl);
-
-      if (description) {
-        const desc = document.createElement('p');
-        desc.style.cssText = 'margin:0 0 14px 0;font-size:13px;color:var(--muted);'
-          + 'line-height:1.5;white-space:pre-wrap;';
-        desc.textContent = description;
-        card.append(desc);
-      } else {
-        card.style.paddingTop = '20px';
-      }
-
-      let input = null;
-      if (type === 'input') {
-        input = document.createElement('input');
-        input.type = 'text';
-        input.style.cssText = 'width:100%;height:36px;padding:6px 10px;margin-top:4px;'
-          + 'font-size:14px;font-family:inherit;color:var(--text);'
-          + 'background:var(--panel-2);border:1px solid var(--border);'
-          + 'border-radius:8px;outline:none;transition:border-color 0.15s;';
-        input.addEventListener('focus', () => { input.style.borderColor = 'var(--accent)'; });
-        input.addEventListener('blur', () => { input.style.borderColor = 'var(--border)'; });
-        if (defaultValue) input.value = defaultValue;
-        if (placeholder) input.placeholder = placeholder;
-        card.append(input);
-      }
-
-      const actions = document.createElement('div');
-      actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px;';
-
-      const cancelBtn = document.createElement('button');
-      cancelBtn.style.cssText = 'width:auto;padding:8px 16px;font-size:13px;font-weight:500;'
-        + 'color:var(--text);background:transparent;border:1px solid var(--border);'
-        + 'border-radius:8px;cursor:pointer;transition:background 0.15s;';
-      cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = 'var(--panel-2)'; });
-      cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
-      cancelBtn.textContent = cancelText;
-
-      const okBtn = document.createElement('button');
-      okBtn.style.cssText = 'width:auto;padding:8px 18px;font-size:13px;font-weight:500;'
-        + 'color:white;border-radius:8px;cursor:pointer;transition:background 0.15s;'
-        + (danger
-            ? 'background:var(--danger);border:1px solid var(--danger);'
-            : 'background:var(--accent);border:1px solid var(--accent);');
-      okBtn.addEventListener('mouseenter', () => {
-        okBtn.style.background = danger ? 'var(--danger-hover)' : 'var(--accent-hover)';
-      });
-      okBtn.addEventListener('mouseleave', () => {
-        okBtn.style.background = danger ? 'var(--danger)' : 'var(--accent)';
-      });
-      okBtn.textContent = confirmText;
-
-      actions.append(cancelBtn, okBtn);
-      card.append(actions);
-
-      root.append(backdrop, card);
-      document.body.append(root);
-
-      const cancelValue = type === 'input' ? null : false;
-
-      const cleanup = (result) => {
-        document.removeEventListener('keydown', onKey);
-        root.remove();
-        resolve(result);
-      };
-
-      const onKey = (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); cleanup(cancelValue); }
-        else if (e.key === 'Enter' && (type === 'confirm' || document.activeElement === input)) {
-          e.preventDefault();
-          cleanup(type === 'input' ? input.value.trim() : true);
-        }
-      };
-      document.addEventListener('keydown', onKey);
-
-      backdrop.addEventListener('click', () => cleanup(cancelValue));
-      cancelBtn.addEventListener('click', () => cleanup(cancelValue));
-      okBtn.addEventListener('click', () => cleanup(type === 'input' ? input.value.trim() : true));
-
-      setTimeout(() => {
-        if (input) { input.focus(); input.select(); }
-        else { okBtn.focus(); }
-      }, 0);
-    });
-  },
-  input(opts) { return this._show({ type: 'input', ...opts }); },
-  confirm(opts) { return this._show({ type: 'confirm', ...opts }); },
-};
 
 //
 // ---- Bookmarks state + UI ----
