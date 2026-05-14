@@ -10,8 +10,11 @@
     __PORT__          HTTP port (default 7766)
 
   Lifecycle:
-    KeepAlive Crashed=true → restart only on non-zero exit, so
-        --idle-minutes=0 (no self-shutdown) means launchd never thrashes.
+    KeepAlive=true         → always restart, regardless of exit reason.
+        Necessary because macOS sleep/wake cycles SIGTERM user agents,
+        and `Crashed` alone treats SIGTERM as a normal stop (won't relaunch).
+        With --idle-minutes=0 (no self-shutdown), launchd won't thrash.
+        To genuinely stop: `make daemon-uninstall` or `launchctl bootout`.
     ThrottleInterval=10    → 10s minimum between restart attempts; if
         we crash-loop in <10s launchd backs off.
     ExitTimeOut=15         → 15s grace after SIGTERM before SIGKILL,
@@ -40,10 +43,7 @@
     <true/>
 
     <key>KeepAlive</key>
-    <dict>
-        <key>Crashed</key>
-        <true/>
-    </dict>
+    <true/>
 
     <key>ThrottleInterval</key>
     <integer>10</integer>
