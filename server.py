@@ -1956,8 +1956,12 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     dwell_radius_m = float(msg.get("dwell_radius_m", 2.5))
     quick_dwell_s = float(msg.get("quick_dwell_s", 5))
 
-    if not raw_route or len(raw_route) < 2:
+    if not raw_route:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
+        return
+    # 1 個座標只在種花模式允許（= 原地繞單朵花）；採花/快速採花仍需要路線。
+    if len(raw_route) == 1 and mode != "plant":
+        await ws.send_json({"type": "error", "message": "採花模式至少需要 2 朵花"})
         return
     if session.running_task and not session.running_task.done():
         await ws.send_json({"type": "error", "message": "已經在跑了，先按停止"})
@@ -1971,8 +1975,16 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
         rng = random.Random()
         from pikmin_walk import haversine_m, step_toward, jitter_position, circle_walk, PROFILES
 
-        async def orbit_at_flower(center: tuple[float, float], duration_s: float) -> None:
-            """繞 center 走小圓圈 duration_s 秒（Pikmin Bloom 需要持續位移才會種花）。"""
+        async def orbit_at_flower(
+            center: tuple[float, float],
+            duration_s: float,
+            report_steps: bool = False,
+        ) -> None:
+            """繞 center 走小圓圈 duration_s 秒（Pikmin Bloom 需要持續位移才會種花）。
+
+            report_steps=True 時每個 tick 帶真實位移距離（相鄰繞圈點 haversine），
+            讓前端統計能累加；多朵路徑沿用 step_m=0.0。
+            """
             if duration_s <= 0 or dwell_radius_m <= 0:
                 return
             profile = PROFILES["circle"]
@@ -1984,15 +1996,20 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 get_speed_kmh=lambda: profile.nominal_kmh,
             )
             elapsed = 0.0
+            prev: tuple[float, float] | None = None
             while elapsed < duration_s:
                 tick = next(iterator)
                 lat, lon = tick.position
                 await session.set_location(lat, lon)
+                step_m = 0.0
+                if report_steps and prev is not None:
+                    step_m = haversine_m(prev, (lat, lon))
+                prev = (lat, lon)
                 await ws.send_json({
                     "type": "tick",
                     "lat": lat,
                     "lon": lon,
-                    "step_m": 0.0,
+                    "step_m": step_m,
                     "note": "orbit",
                 })
                 await asyncio.sleep(profile.tick_s)
@@ -2011,6 +2028,12 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 "loop_route": [[p[0], p[1]] for p in route],
                 "loop_distance_km": loop_dist / 1000,
             })
+
+            # 原地繞單朵花：種花模式只給 1 個座標時，無限繞那個座標。
+            # orbit_at_flower 只會在按停止（CancelledError）時離開。
+            if len(route) == 1:
+                await orbit_at_flower(route[0], float("inf"), report_steps=True)
+                return
 
             lap = 0
             while True:
