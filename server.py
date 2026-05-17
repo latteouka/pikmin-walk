@@ -1908,7 +1908,8 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
             })
 
             # 原地繞單朵花：種花模式只給 1 個座標時，無限繞那個座標。
-            # orbit_at_flower 只會在按停止（CancelledError）時離開。
+            # 正常情況下 orbit_at_flower 只在按停止（CancelledError）時離開；
+            # 若 dwell_radius_m <= 0（異常 payload）它會立即返回，故保留 return 收尾。
             if len(route) == 1:
                 await orbit_at_flower(route[0], float("inf"), report_steps=True)
                 return
