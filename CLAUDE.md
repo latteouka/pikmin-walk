@@ -61,6 +61,12 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 - **Trail repulsion**: 最近 300 ticks 的位置作為 inverse-square repulsion field，避免短期重複踩同一條路
 - **Position jitter 不回寫**: yield 的是 noisy 座標，但 `current` 保持 clean — 防止 random walk drift
 
+### 花朵巡航：原地繞單朵花
+
+- 種花模式下座標框只給 **1 個座標**時，`/flower-cruise` 自動進入「原地繞花」子模式（前端 `isSingleFlowerPlant()` 偵測）。
+- 按開始 → server `_handle_start_loop_walk` 對單元素 route 走 `orbit_at_flower(route[0], float("inf"), report_steps=True)`：以 **10m 半徑**、`circle` profile 的 **~4.5 km/h** 步行速度無限繞圈，按停止（`CancelledError`）才結束。
+- 速度滑桿**不適用**此模式 — Pikmin Bloom 只算 ~6 km/h 以下的移動，繞圈必須維持步行速度才會種花。
+
 ### Wi-Fi pair record 的路徑
 
 - USB pairing record: `/var/db/lockdown/<UDID>.plist` (SIP 保護，usbmux 以 root 讀)
