@@ -846,16 +846,22 @@ async def _health_ping_loop() -> None:
 # --- HTTP routes ----------------------------------------------------------
 
 
+# 頁面 HTML 一律 no-cache：瀏覽器每次用前都要拿 ETag 跟 server 確認，
+# 沒變動回 304（省頻寬），改版後立刻生效。少了這個標頭瀏覽器會套用
+# 啟發式快取（≈檔案age 的 10%），導致改版後使用者卡在舊頁面數小時。
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
 async def index(request):
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers=_NO_CACHE)
 
 
 async def walk_page(request):
-    return FileResponse(STATIC_DIR / "walk.html")
+    return FileResponse(STATIC_DIR / "walk.html", headers=_NO_CACHE)
 
 
 async def flower_cruise_page(request):
-    return FileResponse(STATIC_DIR / "flower-cruise.html")
+    return FileResponse(STATIC_DIR / "flower-cruise.html", headers=_NO_CACHE)
 
 
 async def config_get(request):
