@@ -488,8 +488,7 @@ class DeviceSession:
 
     # Bounded wait for the iOS RemoteService write. If the wifi tunnel is
     # half-dead the underlying socket can hang forever — this caps it so
-    # cancellation/shutdown stays prompt and the smart-restart probe can
-    # detect a stuck channel.
+    # cancellation/shutdown stays prompt.
     LOC_SIM_TIMEOUT = 5.0
 
     async def mark_dead(self, reason: str) -> None:
@@ -981,144 +980,30 @@ async def categories_patch(request):
     return JSONResponse(_bookmarks_response(shared))
 
 
-# ─── Smart restart ────────────────────────────────────────────────────────
+# ─── Restart trigger (for update flow) ────────────────────────────────────
 #
-# The user-facing "restart" button has one job: get the friend back to a
-# working state. That looks different depending on what's actually broken:
-#
-#   * Server bug / stale state         → restart server only (fast path)
-#   * Wifi tunnel hung (loc_sim stuck) → bounce tunneld AS WELL, because
-#                                        the dead tunnel is upstream of us
-#                                        and won't recover on server restart
-#
-# We probe `loc_sim.set(last_position)` with a tight 2s timeout to tell
-# the two apart. The probe is a no-op write (same coords as cached), so
-# nothing visible happens to the phone if the tunnel is fine.
-#
-# When this server is run by launchd (LaunchAgent for the friend's
-# install), we use `launchctl kickstart -k`:
-#   - `gui/<uid>/com.pikmin.walker[.<port>]` for the server (no sudo)
-#   - `system/com.pikmin.tunneld`            for tunneld   (needs sudo,
-#                                                          NOPASSWD via
-#                                                          /etc/sudoers.d)
-# Otherwise (dev mode) we fall through to `make restart-*` and
-# `sudo pkill -f tunneld`.
+# A pulled update is useless until the server reloads it, so the update
+# flow needs a way to relaunch the current process. We delegate to the
+# Makefile's `restart-*` target (matched to RUNTIME_PORT) through a
+# detached shell — the shell sleeps briefly so the HTTP response can
+# flush before our process gets killed, then `make restart-*` waits for
+# our port to free before starting the new server.
 
 
-def _detect_launchd_label() -> str | None:
-    """Return our LaunchAgent label if launchd started us, else None.
-
-    launchd injects ``XPC_SERVICE_NAME=<Label>`` into the child env, so
-    the presence (and pikmin-prefix) of that var is the ground truth.
-    """
-    label = os.environ.get("XPC_SERVICE_NAME", "")
-    if label.startswith("com.pikmin.walker"):
-        return label
-    return None
-
-
-async def _probe_tunnel_dead() -> bool:
-    """Decide whether the smart restart should also bounce tunneld.
-
-    Three outcomes:
-
-    1. ``device_alive=False`` — already known dead (mark_dead fired, or
-       cold-start before any successful connection). tunneld is the most
-       likely culprit either way; bouncing is safe (no-op if it's not
-       running) and helpful (clears any stale tunnel state).
-
-    2. ``device_alive=True`` + can probe — write last_position back
-       through loc_sim with a 2s budget. Timeout / error → tunnel is
-       half-dead → bounce.
-
-    3. ``device_alive=True`` + nothing to probe (no last_position yet)
-       — assume healthy, just restart server.
-    """
-    # Case 1: known dead → bounce tunneld.
-    if not session.device_alive:
-        return True
-
-    # Case 3: alive but no probe payload available.
-    if session.loc_sim is None or session.last_position is None:
-        return False
-
-    # Case 2: alive — actively probe the channel.
-    lat, lon = session.last_position
-    try:
-        await asyncio.wait_for(session.loc_sim.set(lat, lon), timeout=2.0)
-        return False
-    except Exception:
-        return True
-
-
-def _build_restart_command(*, tunnel_dead: bool, launchd_label: str | None) -> str:
-    """Compose the detached shell command that does the actual restart.
-
-    The shell sleeps briefly so the HTTP response can flush before the
-    server gets killed. `setsid` (start_new_session) is set on Popen so
-    the shell survives our death.
-    """
-    parts: list[str] = ["sleep 1"]
-
-    if launchd_label is not None:
-        # Production path: launchd-managed.
-        if tunnel_dead:
-            parts.append(
-                "sudo /bin/launchctl kickstart -k system/com.pikmin.tunneld || true"
-            )
-            parts.append("sleep 2")  # let tunneld come back up
-        uid = os.getuid()
-        parts.append(
-            f"/bin/launchctl kickstart -k gui/{uid}/{launchd_label}"
-        )
+def _build_restart_command() -> str:
+    """Compose the detached shell command that relaunches this server."""
+    if RUNTIME_PORT == 7766:
+        target = "restart-ipad"
+    elif RUNTIME_PORT == 7767:
+        target = "restart-iphone"
+    elif RUNTIME_PORT == 7770:
+        target = "restart-iphone2"
     else:
-        # Dev path: Makefile-managed.
-        if tunnel_dead:
-            parts.append(
-                'sudo /usr/bin/pkill -f "pymobiledevice3.*tunneld" || true'
-            )
-            parts.append("sleep 1")
-
-        if RUNTIME_PORT == 7766:
-            target = "restart-ipad"
-        elif RUNTIME_PORT == 7767:
-            target = "restart-iphone"
-        elif RUNTIME_PORT == 7770:
-            target = "restart-iphone2"
-        else:
-            target = "restart"
-        parts.append(f'cd "{HERE}" && /usr/bin/make {target}')
-
-    body = " && ".join(parts)
-    return f"({body}) > /tmp/pikmin-restart.log 2>&1 &"
-
-
-async def admin_restart(request):
-    """Smart restart: probe tunnel, then bounce server (and tunneld if hung).
-
-    Response is sent immediately so the front-end can switch to "polling
-    for the new server" mode while the detached shell does the work.
-    """
-    origin = request.headers.get("origin", "")
-    host = request.headers.get("host", "")
-    if origin and host and not origin.endswith(host):
-        return JSONResponse({"error": "cross-origin not allowed"}, status_code=403)
-
-    tunnel_dead = await _probe_tunnel_dead()
-    launchd_label = _detect_launchd_label()
-    cmd = _build_restart_command(tunnel_dead=tunnel_dead, launchd_label=launchd_label)
-
-    subprocess.Popen(
-        cmd, shell=True, start_new_session=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        cwd=str(HERE),
+        target = "restart"
+    return (
+        f'(sleep 1 && cd "{HERE}" && /usr/bin/make {target}) '
+        f'> /tmp/pikmin-restart.log 2>&1 &'
     )
-    return JSONResponse({
-        "ok": True,
-        "tunnel_dead": tunnel_dead,
-        "via": "launchd" if launchd_label else "make",
-        "port": RUNTIME_PORT,
-    })
 
 
 async def admin_health(request):
@@ -1143,8 +1028,8 @@ async def admin_health(request):
 #                            and the pending commit list.
 #
 #   POST /api/update/apply   re-checks, refuses if dirty / non-ff, runs
-#                            `git pull --ff-only`, then triggers the
-#                            existing smart-restart flow.
+#                            `git pull --ff-only`, then relaunches via
+#                            `make restart-*` so the new code loads.
 #
 # A background poller calls /check every UPDATE_POLL_S seconds and pushes
 # `update_available` over WebSocket when new commits land — friend sees a
@@ -1242,7 +1127,7 @@ async def update_check(request):
 
 
 async def update_apply(request):
-    """Apply pending updates if safe, then trigger smart restart.
+    """Apply pending updates if safe, then relaunch so the new code loads.
 
     Refuses on: network error, non-fast-forward, dirty tree, no updates.
     """
@@ -1286,16 +1171,9 @@ async def update_apply(request):
                 status_code=500,
             )
 
-    # Pull succeeded — trigger restart through the existing smart-restart
-    # path so the new code actually loads. Re-uses _build_restart_command
-    # so launchd vs make routing stays consistent.
-    tunnel_dead = False  # pull doesn't touch the tunnel; assume healthy
-    cmd = _build_restart_command(
-        tunnel_dead=tunnel_dead,
-        launchd_label=_detect_launchd_label(),
-    )
+    # Pull succeeded — relaunch so the new code actually loads.
     subprocess.Popen(
-        cmd, shell=True, start_new_session=True,
+        _build_restart_command(), shell=True, start_new_session=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(HERE),
     )
@@ -2183,11 +2061,9 @@ async def lifespan(app):
 
     yield
 
-    # Lifespan teardown is bound by tight timeouts: under launchd
-    # ExitTimeOut=15 we must finish well within that, and `make
-    # restart-*` waits for our port to free before starting the new
-    # server — every second here delays the friend's "are we back yet?"
-    # poll. Worst case total: 1 + 0.5*N + 3 ≈ 4-5s for typical setups.
+    # Lifespan teardown is bound by tight timeouts so update-triggered
+    # `make restart-*` doesn't hang on port-free polling. Worst case
+    # total: 1 + 0.5*N + 3 ≈ 4-5s for typical setups.
 
     # 1. Notify clients before pulling the rug.
     try:
@@ -2244,7 +2120,6 @@ app = Starlette(
         Route("/api/bookmark-categories", categories_post, methods=["POST"]),
         Route("/api/bookmark-categories/{name}", categories_patch, methods=["PATCH"]),
         Route("/api/bookmark-categories/{name}", categories_delete, methods=["DELETE"]),
-        Route("/api/admin/restart", admin_restart, methods=["POST"]),
         Route("/api/admin/health", admin_health, methods=["GET"]),
         Route("/api/update/check", update_check, methods=["GET"]),
         Route("/api/update/apply", update_apply, methods=["POST"]),

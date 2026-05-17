@@ -1,14 +1,11 @@
-// Pikmin Walker — admin overlay (restart + update + WS health signals).
+// Pikmin Walker — admin overlay (update flow + shutdown overlay).
 //
 // Loaded by all three pages (index, walk, flower-cruise). Owns:
 //
-//   * #navRestart click  → smart restart (auto-detects tunnel hang)
-//   * #navUpdate click   → check + apply git pull --ff-only
-//   * Update badge       → red dot when origin/main has new commits
-//   * Tunnel pill        → grey/green/red dot reflecting device_alive
-//   * Shutdown overlay   → fullscreen "restarting" + auto-reload when
-//                          server_shutdown / device_disconnected → restart
-//                          fires
+//   * #navUpdate click       → check + apply git pull --ff-only
+//   * Update badge           → red dot when origin/main has new commits
+//   * Shutdown overlay       → fullscreen "restarting" + auto-reload
+//                              after update_apply triggers `make restart-*`
 //
 // Each page's WS handleMessage() delegates to window.PikminAdmin.handle(m)
 // FIRST and only handles its own events if .handle returns false.
@@ -64,10 +61,10 @@
         // Build the recovery hint with safe DOM methods (no innerHTML).
         sub.textContent = '';
         const line1 = document.createElement('div');
-        line1.textContent = '看起來 launchd / make 卡住了。';
+        line1.textContent = '看起來 make restart 卡住了。';
         const line2 = document.createElement('div');
         line2.style.cssText = 'margin-top:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#cbd5f5;';
-        line2.textContent = 'tail /tmp/pikmin-walker.log';
+        line2.textContent = 'tail /tmp/pikmin-restart.log';
         const line3 = document.createElement('div');
         line3.style.cssText = line2.style.cssText;
         line3.textContent = 'make stop && make start-ipad';
@@ -81,27 +78,6 @@
     // 2.5s before first poll — server's `sleep 1` + restart cmd needs
     // time to actually take us down before we start probing.
     setTimeout(tryReload, 2500);
-  }
-
-  // ─── Restart button ────────────────────────────────────────────────
-
-  function wireRestart() {
-    const btn = document.getElementById('navRestart');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      const M = safeModal();
-      if (M) {
-        const ok = await M.confirm({
-          title: '重啟伺服器？',
-          description: '伺服器會停下 1-2 秒後自動回來，頁面會自動重新整理。\n如果連線異常，會自動連 tunneld 一起修。',
-          confirmText: '重啟',
-          danger: true,
-        });
-        if (!ok) return;
-      }
-      fetch('/api/admin/restart', { method: 'POST' }).catch(() => {});
-      showShutdownOverlay();
-    });
   }
 
   // ─── Update badge + button ─────────────────────────────────────────
@@ -282,42 +258,8 @@
 
   // ─── WS message hook ───────────────────────────────────────────────
 
-  function setTunnelPill(alive) {
-    // Decorate #navRestart with a small dot so the friend sees at-a-glance
-    // whether the device tunnel is alive. Red = needs restart.
-    const btn = document.getElementById('navRestart');
-    if (!btn) return;
-    let dot = btn.querySelector('.tunnel-dot');
-    if (!dot) {
-      dot = document.createElement('span');
-      dot.className = 'tunnel-dot';
-      dot.style.cssText = 'position:absolute;bottom:2px;right:2px;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--background,#0b1220);';
-      btn.style.position = 'relative';
-      btn.appendChild(dot);
-    }
-    if (alive === true) {
-      dot.style.background = '#22c55e';
-      btn.setAttribute('title', '伺服器 / 連線正常 — 點擊重啟');
-    } else if (alive === false) {
-      dot.style.background = '#ef4444';
-      btn.setAttribute('title', '⚠ 連線中斷 — 點擊重啟');
-    } else {
-      dot.style.background = '#94a3b8';
-      btn.setAttribute('title', '重啟伺服器');
-    }
-  }
-
   function handle(m) {
     switch (m.type) {
-      case 'hello':
-        setTunnelPill(m.device_alive);
-        return false;  // let page also handle hello
-      case 'device_disconnected':
-        setTunnelPill(false);
-        return true;
-      case 'device_connected':
-        setTunnelPill(true);
-        return true;
       case 'update_available':
         setUpdateBadge(m.count);
         pendingUpdate = m;
@@ -333,9 +275,7 @@
   // ─── Bootstrap ────────────────────────────────────────────────────
 
   function init() {
-    wireRestart();
     wireUpdate();
-    setTunnelPill(null);
   }
 
   if (document.readyState === 'loading') {

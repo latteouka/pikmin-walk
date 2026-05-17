@@ -2,8 +2,7 @@
         kill-tunnel clear logs help \
         start-ipad start-iphone start-iphone2 stop-ipad stop-iphone stop-iphone2 \
         restart-ipad restart-iphone restart-iphone2 mount-iphone-ddi mount-iphone2-ddi \
-        status-all list-devices \
-        install-friend daemon-install daemon-uninstall daemon-status
+        status-all list-devices
 
 # Per-machine overrides (device UDIDs etc). The file is gitignored — copy
 # Makefile.local.example or run `make list-devices` to get your UDIDs.
@@ -28,22 +27,7 @@ help: ## Show this help
 install: ## One-time setup on macOS (uv + pymobiledevice3 + 裝置 checklist)
 	@bash scripts/install.sh
 
-install-friend: ## 朋友機器一鍵安裝（install + sudoers + launchd auto-start）
-	@bash scripts/install-friend.sh
-
-daemon-install: ## 只裝 LaunchAgent + LaunchDaemon（前提：install + setup-sudo 已跑過）
-	@bash scripts/launchd/install-launchd.sh
-
-daemon-uninstall: ## 解除 LaunchAgent + LaunchDaemon
-	@bash scripts/launchd/uninstall-launchd.sh
-
-daemon-status: ## 顯示兩個 launchd 服務的狀態
-	@echo "== LaunchAgent (com.pikmin.walker) =="
-	@launchctl print "gui/$$(id -u)/com.pikmin.walker" 2>/dev/null | grep -E "(state|last exit)" | sed 's/^/  /' || echo "  not loaded"
-	@echo "== LaunchDaemon (com.pikmin.tunneld) =="
-	@sudo launchctl print system/com.pikmin.tunneld 2>/dev/null | grep -E "(state|last exit)" | sed 's/^/  /' || echo "  not loaded"
-
-setup-sudo: ## Install sudoers rule so tunneld no longer prompts for password
+setup-sudo: ## Install NOPASSWD sudoers rule so `make tunnel` doesn't prompt
 	@bash scripts/setup_sudo.sh
 
 remove-sudo: ## Remove the sudoers rule installed by setup-sudo
@@ -220,12 +204,10 @@ osrm-down: ## Stop OSRM containers
 
 # ─── Shared ──────────────────────────────────────────────────────────────
 
-# pymobiledevice3 absolute path — must match the sudoers rule built by
-# scripts/setup_sudo.sh. Bare `pymobiledevice3` would resolve via PATH,
-# which when invoked from server.py's `uv run` venv finds the venv copy
-# (different absolute path) and sudo's NOPASSWD rule no longer matches
-# → sudo silently asks for password → smart-restart sudo fails with no
-# tty → tunneld never comes back up.
+# pymobiledevice3 absolute path — bare `pymobiledevice3` would resolve
+# via PATH and may pick up the `uv run` venv copy instead of the user's
+# pinned install. Hard-code the path so `make tunnel` always uses the
+# same binary regardless of caller environment.
 PMD := $(HOME)/.local/bin/pymobiledevice3
 
 tunnel: ## Start tunneld if not running (sudo, iOS 17+ only)
