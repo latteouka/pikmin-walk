@@ -547,15 +547,24 @@ function getCruiseMode() {
   for (const r of $modeRadios) if (r.checked) return r.value;
   return 'harvest';
 }
-function syncDwellVisibility() {
-  $dwellRow.style.display = getCruiseMode() === 'plant' ? 'grid' : 'none';
-}
-$modeRadios.forEach(r => r.addEventListener('change', syncDwellVisibility));
-syncDwellVisibility();
-
 let parsedFlowers = [];      // [[lat, lon], ...] from textarea
 let previewedRoute = null;   // { ordered, distance_km, count } from server
 let startFromIndex = 0;      // 0-indexed; 0 = start from the first TSP flower
+
+// 種花模式只解析出 1 朵花時 = 原地繞單朵花子模式（自動偵測，無新增開關）
+function isSingleFlowerPlant() {
+  return getCruiseMode() === 'plant' && parsedFlowers.length === 1;
+}
+// 多朵種花才顯示 dwell 欄位；單朵原地繞花不適用
+function syncDwellVisibility() {
+  const show = getCruiseMode() === 'plant' && parsedFlowers.length >= 2;
+  $dwellRow.style.display = show ? 'grid' : 'none';
+}
+$modeRadios.forEach(r => r.addEventListener('change', () => {
+  syncDwellVisibility();
+  applySingleFlowerPlant();
+}));
+syncDwellVisibility();
 
 // Great-circle distance helpers — used to recompute slice distance when the
 // user picks a non-default start. Mirrors pikmin_walk.haversine_m.
@@ -593,6 +602,8 @@ function updateParseInfo() {
     $parseInfo.textContent = '尚未解析';
     $btnPreview.disabled = true;
     $btnInOrder.disabled = true;
+    $btnStart.disabled = true;
+    clearOrbitCircle();
     return;
   }
   $parseInfo.textContent = `已解析 ${parsedFlowers.length} 朵花`;
@@ -611,6 +622,9 @@ function updateParseInfo() {
   $btnStart.disabled = true;
   $preview.textContent = '輸入已變更，按「預覽路線」重新規劃';
   $preview.className = 'preview-info';
+  // 種花模式 + 剛好 1 朵 → 自動進入原地繞花；其餘情況維持上面的重置
+  syncDwellVisibility();
+  applySingleFlowerPlant();
 }
 
 function renderFlowerMarkers(flowers, ordered, skipBefore = 0) {
@@ -642,6 +656,36 @@ function redrawForStart() {
   updateLapTime();
   // Need ≥2 points to walk; disable Start otherwise.
   $btnStart.disabled = slice.length < 2;
+}
+
+let orbitCircle = null;  // 10m 繞圈示意圈（單朵原地繞花）
+function showOrbitCircle(flower) {
+  clearOrbitCircle();
+  orbitCircle = L.circle(flower, {
+    radius: 10, color: '#ec4899', weight: 2,
+    fillColor: '#ec4899', fillOpacity: 0.12, dashArray: '4, 4',
+  }).addTo(map);
+}
+function clearOrbitCircle() {
+  if (orbitCircle) { map.removeLayer(orbitCircle); orbitCircle = null; }
+}
+
+// 依目前模式 / 已解析花朵數，套用「原地繞單朵花」的 UI 狀態。
+// 0 或 ≥2 朵時只負責清掉繞圈示意圈，不碰其他按鈕狀態。
+function applySingleFlowerPlant() {
+  clearOrbitCircle();
+  if (parsedFlowers.length !== 1) return;
+  if (isSingleFlowerPlant()) {
+    showOrbitCircle(parsedFlowers[0]);
+    $btnStart.disabled = false;
+    $preview.textContent = '🔁 原地繞花 · 10m 圈 · ~4.5 km/h 步行 — 按「開始」無限繞圈';
+    $preview.className = 'preview-info';
+  } else {
+    // 1 朵但模式是採花 / 快速採花
+    $btnStart.disabled = true;
+    $preview.textContent = '採花模式至少需要 2 朵花';
+    $preview.className = 'preview-info';
+  }
 }
 
 $flowersText.addEventListener('input', updateParseInfo);
