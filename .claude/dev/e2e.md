@@ -111,7 +111,7 @@ Branch: `feat/in-place-flower-orbit`
 
 1. **Story:** 種花模式貼 1 個座標自動進入原地繞花
    - **Steps:** `/flower-cruise` 種花模式，座標框貼 1 個座標
-   - **Expected Result:** 「開始」啟用、「預覽/按順序」停用、出現 10m 示意圈（`#ec4899` dash `4,4`）、dwell 欄位隱藏、previewInfo 顯示「🔁 原地繞花 · 10m 圈 · ~4.5 km/h 步行…」
+   - **Expected Result:** 「開始」啟用、「預覽/按順序」停用、出現 70m 示意圈（`#ec4899` dash `4,4`）、dwell 欄位隱藏、previewInfo 顯示「🔁 原地繞花 · 70m 圈 · ~4.5 km/h 步行…」
    - **Status:** ✅ Passing
    - **Last Updated:** 2026-05-17
 

@@ -64,8 +64,9 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 ### 花朵巡航：原地繞單朵花
 
 - 種花模式下座標框只給 **1 個座標**時，`/flower-cruise` 自動進入「原地繞花」子模式（前端 `isSingleFlowerPlant()` 偵測）。
-- 按開始 → server `_handle_start_loop_walk` 對單元素 route 走 `orbit_at_flower(route[0], float("inf"), report_steps=True)`：以 **10m 半徑**、`circle` profile 的 **~4.5 km/h** 步行速度無限繞圈，按停止（`CancelledError`）才結束。
+- 按開始 → server `_handle_start_loop_walk` 對單元素 route 走 `orbit_at_flower(route[0], float("inf"), report_steps=True)`：以 **70m 半徑**、`circle` profile 的 **~4.5 km/h** 步行速度無限繞圈，按停止（`CancelledError`）才結束。
 - 速度滑桿**不適用**此模式 — Pikmin Bloom 只算 ~6 km/h 以下的移動，繞圈必須維持步行速度才會種花。
+- **為什麼半徑是 70m 不是 10m**：iOS simulate-location 的 `horizontalAccuracy` 硬性回報 65m。半徑 < 65m 的圈整個埋在 GPS 誤差圓裡，Pikmin Bloom 分不出是移動還是雜訊 → 角色在原地抖動、不種花。70m（直徑 140m）穩過 65m 雜訊地板。`dwell_radius_m` 由前端 `flower-cruise.html` 的單朵分支送出。
 
 ### Wi-Fi pair record 的路徑
 
