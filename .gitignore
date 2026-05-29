@@ -17,3 +17,6 @@ Makefile.local
 .playwright-mcp/
 /*.png
 
+# Brainstorming visual-companion scratch
+.superpowers/
+
