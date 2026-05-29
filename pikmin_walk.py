@@ -329,6 +329,26 @@ def figure_points(
     return pts
 
 
+def point_at_offset(points: list[Waypoint], offset_m: float) -> Waypoint:
+    """Point at arc-length `offset_m` along the closed polyline `points`.
+
+    `offset_m` is taken modulo the total length, so it wraps seamlessly —
+    callers advance offset every tick and never need to reset it.
+    """
+    if len(points) < 2:
+        return points[0]
+    seg = [haversine_m(points[i], points[i + 1]) for i in range(len(points) - 1)]
+    total = sum(seg)
+    if total <= 0:
+        return points[0]
+    s = offset_m % total
+    for i, d in enumerate(seg):
+        if s <= d:
+            return points[i] if d <= 0 else step_toward(points[i], points[i + 1], s)
+        s -= d
+    return points[-1]
+
+
 # --- Simulation -----------------------------------------------------------
 
 
