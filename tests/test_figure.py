@@ -43,4 +43,4 @@ def test_point_at_offset_advances_by_distance():
     p0 = point_at_offset(pts, 100.0)
     p1 = point_at_offset(pts, 110.0)
     d = haversine_m(p0, p1)
-    assert 8.0 <= d <= 10.5
+    assert 9.0 <= d <= 11.0

@@ -292,6 +292,8 @@ def _segment_points(a: Waypoint, b: Waypoint, step_m: float) -> list[Waypoint]:
     (step_toward snaps to the target on overshoot). `a` itself is omitted so
     callers can chain segments without duplicating the shared vertex.
     """
+    if step_m <= 0:
+        raise ValueError(f"step_m must be positive, got {step_m}")
     dist = haversine_m(a, b)
     n = max(1, int(math.ceil(dist / step_m)))
     return [step_toward(a, b, step_m * k) for k in range(1, n + 1)]
@@ -317,7 +319,7 @@ def figure_points(
     for k in range(circ_n + 1):
         ang = 2 * math.pi * k / circ_n
         pts.append(destination_point(center, ang, circle_r_m))
-    north_in = destination_point(center, 0.0, circle_r_m)
+    north_in = pts[0]  # == destination_point(center, 0.0, circle_r_m), k=0
     v1 = destination_point(center, 0.0, tri_r_m)
     v2 = destination_point(center, 2 * math.pi / 3, tri_r_m)
     v3 = destination_point(center, 4 * math.pi / 3, tri_r_m)
@@ -335,6 +337,8 @@ def point_at_offset(points: list[Waypoint], offset_m: float) -> Waypoint:
     `offset_m` is taken modulo the total length, so it wraps seamlessly —
     callers advance offset every tick and never need to reset it.
     """
+    if not points:
+        raise ValueError("point_at_offset requires a non-empty polyline")
     if len(points) < 2:
         return points[0]
     seg = [haversine_m(points[i], points[i + 1]) for i in range(len(points) - 1)]
@@ -344,7 +348,7 @@ def point_at_offset(points: list[Waypoint], offset_m: float) -> Waypoint:
     s = offset_m % total
     for i, d in enumerate(seg):
         if s <= d:
-            return points[i] if d <= 0 else step_toward(points[i], points[i + 1], s)
+            return points[i] if d == 0 else step_toward(points[i], points[i + 1], s)
         s -= d
     return points[-1]
 
