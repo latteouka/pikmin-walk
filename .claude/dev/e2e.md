@@ -150,3 +150,36 @@ Branch: `feat/in-place-flower-orbit`
 - 全程 console 無功能性 JS 錯誤（僅預存的 favicon 404 + Tailwind CDN 警告）。實機測試期間出現的 `ws ERR_CONNECTION_REFUSED` 是 server 重啟視窗內 WebSocket 自動重連的暫態，非功能 bug。
 - 速度滑桿對原地繞花不生效：server 固定用 `circle` profile 的 ~4.5 km/h（Pikmin Bloom 步數上限 ~6 km/h），此為設計約束，非缺陷。
 - 已知坑：server 重啟後 iOS 17+ 裝置的 DVT tunnel 需數十秒才就緒；就緒前 `set_location` 會卡住、`hello` 不帶 `device`。等 `hello` 帶 `device` 後再操作。
+
+## 種花巡航：圓＋大三角形拼花
+
+### Test Scenarios
+
+1. **Story:** plant 模式 UI 鎖定（無需裝置，headless 可驗）
+   - **Steps:** 開 /flower-cruise → 切「🌱 種花」radio
+   - **Expected Result:** 速度滑桿(`#speedRow`)隱藏、loop 開關(`.loop-row`)隱藏（強制循環）；貼 ≥2 朵時出現「每朵停留秒數」(`#dwellEach`, 預設 60)；切回「🌸 採花」三者全部還原（speedRow/loopRow `display:flex`）
+   - **Status:** ⏳ In Progress
+   - **Last Updated:** 2026-05-29
+
+2. **Story:** plant 模式送出正確 payload（headless 攔 WS）
+   - **Steps:** 切「種花」→ 多朵：預覽後按開始；單朵：貼 1 朵按開始。攔截 `ws.send` 內容。
+   - **Expected Result:** 多朵送 `{mode:'plant', loop:true, dwell_each_s:60, circle_r_m:70, tri_r_m:95}` 且**無** `dwell_radius_m`；單朵送 `{route:[1朵], loop:true, mode:'plant', circle_r_m:70, tri_r_m:95}`
+   - **Status:** ⏳ In Progress
+   - **Last Updated:** 2026-05-29
+
+3. **Story:** 多朵種花端到端（需真機 USB）
+   - **Steps:** USB 連 iPad → `make start-ipad` → 貼 ≥2 朵 → 預覽 → 種花 → 開始
+   - **Expected Result:** 收到 `loop_walk_started`；tick 交替出現 `note:"teleport"`(step_m=0) 與 `note:"figure"`；`loop_lap` 持續遞增；地圖每朵逐圈畫出圓+三角形輪廓；停止收到 `stopped`
+   - **Status:** ⏳ Pending（需真機；server 邏輯已由 smoke test 驗證 teleport/figure/loop_lap，幾何由單元測試覆蓋）
+   - **Last Updated:** 2026-05-29
+
+4. **Story:** 單朵種花端到端（需真機 USB）
+   - **Steps:** 貼 1 朵 → 種花 → 開始
+   - **Expected Result:** 持續 `note:"figure"` tick、無 teleport；地圖原地畫出圓+三角形；停止收到 `stopped`
+   - **Status:** ⏳ Pending（需真機；server 單朵分支走 `walk_figure(...,inf)`，已 smoke 驗證）
+   - **Last Updated:** 2026-05-29
+
+### Notes
+
+- Story 3/4 的「實際種到花」需 Pikmin Bloom App 觀察，屬遊戲端行為，不在自動化範圍。
+- 驗證三角：幾何 `figure_points`/`point_at_offset` 有單元測試（`tests/test_figure.py`，6 passing）；server plant flow 有 `/tmp/smoke_plant.py` smoke（teleport/figure/loop_lap 皆 True）；前端行為由 Story 1/2 headless 覆蓋。
