@@ -61,12 +61,14 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 - **Trail repulsion**: 最近 300 ticks 的位置作為 inverse-square repulsion field，避免短期重複踩同一條路
 - **Position jitter 不回寫**: yield 的是 noisy 座標，但 `current` 保持 clean — 防止 random walk drift
 
-### 花朵巡航：原地繞單朵花
+### 花朵巡航：圓＋大三角形拼花
 
-- 種花模式下座標框只給 **1 個座標**時，`/flower-cruise` 自動進入「原地繞花」子模式（前端 `isSingleFlowerPlant()` 偵測）。
-- 按開始 → server `_handle_start_loop_walk` 對單元素 route 走 `orbit_at_flower(route[0], float("inf"), report_steps=True)`：以 **70m 半徑**、`circle` profile 的 **~4.5 km/h** 步行速度無限繞圈，按停止（`CancelledError`）才結束。
-- 速度滑桿**不適用**此模式 — Pikmin Bloom 只算 ~6 km/h 以下的移動，繞圈必須維持步行速度才會種花。
-- **為什麼半徑是 70m 不是 10m**：iOS simulate-location 的 `horizontalAccuracy` 硬性回報 65m。半徑 < 65m 的圈整個埋在 GPS 誤差圓裡，Pikmin Bloom 分不出是移動還是雜訊 → 角色在原地抖動、不種花。70m（直徑 140m）穩過 65m 雜訊地板。`dwell_radius_m` 由前端 `flower-cruise.html` 的單朵分支送出。
+- 種花模式（`mode: plant`）每朵花原地畫一個「圓(70m) ＋ 大三角形(角95m)」的固定 polyline（`pikmin_walk.figure_points`，閉合；`point_at_offset` 依弧長取點）。
+- **多朵**：`_handle_start_loop_walk` 對每朵 teleport 到該朵圖的進度點 → `walk_figure` 沿圖走 `dwell_each_s`(預設 60s ≈ 75m) → 飛下一朵 → **無限循環**（plant 永遠 loop，忽略 loop flag）。每朵維護自己的弧長 offset（`progress[i]`），跨圈一段一段把整個圖拼出來（約 13 圈畫滿一輪後重疊續種）。
+- **單朵**（route 長度 1）：`walk_figure(figure_points(...), 0.0, inf)` 原地無限畫整個圖，按停止（`CancelledError`）才結束。
+- 速度鎖在 `circle` profile 的 **~4.5 km/h** 步行速度（前端 plant 模式隱藏速度滑桿、強制 loop）。
+- **為什麼半徑 70/95m**：iOS simulate-location 的 `horizontalAccuracy` 硬性回報 65m，半徑 < 65m 整個埋在 GPS 誤差圓裡 → Pikmin Bloom 分不出移動／雜訊 → 不種花。圓 70m（直徑 140m）已驗證穩過 65m 地板；大三角形角伸到 95m、邊切過內部（最近 ~47m）覆蓋中央。
+- **為什麼分多圈拼**：>65m 的圖走完要 ~6 分，60s/朵畫不完；分散到多圈既保持每朵停留短、又每次都有效（種花量只看總步行時間）。`circle_r_m` / `tri_r_m` / `dwell_each_s` 由前端送出（server 帶預設 70/95/60）。
 
 ### Wi-Fi pair record 的路徑
 
