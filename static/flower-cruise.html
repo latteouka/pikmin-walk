@@ -421,7 +421,7 @@ const Modal = {
       </div>
     </div>
 
-    <div class="control-row">
+    <div class="control-row" id="speedRow">
       <label>速度</label>
       <input type="range" id="speed" min="3" max="25" value="19" step="1">
       <span class="value" id="speedVal">19 km/h</span>
@@ -457,12 +457,8 @@ const Modal = {
 
     <div class="dwell-row" id="dwellRow" style="display:none;">
       <div class="field">
-        <span class="field-label">每朵繞圈秒數</span>
-        <input type="number" id="dwellEach" min="0" max="120" value="8" step="1">
-      </div>
-      <div class="field">
-        <span class="field-label">最後一朵久留秒數</span>
-        <input type="number" id="dwellLast" min="0" max="600" value="60" step="5">
+        <span class="field-label">每朵停留秒數</span>
+        <input type="number" id="dwellEach" min="10" max="300" value="60" step="5">
       </div>
     </div>
 
@@ -539,7 +535,6 @@ const $startFrom = document.getElementById('startFrom');
 const $totalFlowers = document.getElementById('totalFlowers');
 const $loopChk = document.getElementById('loopChk');
 const $dwellEach = document.getElementById('dwellEach');
-const $dwellLast = document.getElementById('dwellLast');
 const $dwellRow = document.getElementById('dwellRow');
 const $modeRadios = document.querySelectorAll('input[name="cruiseMode"]');
 
@@ -556,15 +551,23 @@ function isSingleFlowerPlant() {
   return getCruiseMode() === 'plant' && parsedFlowers.length === 1;
 }
 // 多朵種花才顯示 dwell 欄位；單朵原地繞花不適用
-function syncDwellVisibility() {
-  const show = getCruiseMode() === 'plant' && parsedFlowers.length >= 2;
-  $dwellRow.style.display = show ? 'grid' : 'none';
+const $speedRow = document.getElementById('speedRow');
+const $loopRow = document.querySelector('.loop-row');
+function syncModeUI() {
+  const isPlant = getCruiseMode() === 'plant';
+  // dwell 欄位：plant 多朵才顯示
+  $dwellRow.style.display = (isPlant && parsedFlowers.length >= 2) ? 'grid' : 'none';
+  // plant 鎖步行速度 → 隱藏速度滑桿
+  $speedRow.style.display = isPlant ? 'none' : 'flex';
+  // plant 仰賴循環拼花 → 強制開、隱藏 loop 開關
+  if (isPlant) { $loopChk.checked = true; }
+  $loopRow.style.display = isPlant ? 'none' : 'flex';
 }
 $modeRadios.forEach(r => r.addEventListener('change', () => {
-  syncDwellVisibility();
+  syncModeUI();
   applySingleFlowerPlant();
 }));
-syncDwellVisibility();
+syncModeUI();
 
 // Great-circle distance helpers — used to recompute slice distance when the
 // user picks a non-default start. Mirrors pikmin_walk.haversine_m.
@@ -623,7 +626,7 @@ function updateParseInfo() {
   $preview.textContent = '輸入已變更，按「預覽路線」重新規劃';
   $preview.className = 'preview-info';
   // 種花模式 + 剛好 1 朵 → 自動進入原地繞花；其餘情況維持上面的重置
-  syncDwellVisibility();
+  syncModeUI();
   applySingleFlowerPlant();
 }
 
@@ -889,36 +892,43 @@ function handleMessage(m) {
 }
 
 $btnStart.addEventListener('click', () => {
-  // 原地繞單朵花：種花模式只解析出 1 朵時，繞那朵無限圈（速度滑桿不適用，
-  // 伺服器固定用 circle profile 的 ~4.5 km/h 步行速度）。
+  const FIGURE = { circle_r_m: 70, tri_r_m: 95 };
+  // 原地單朵種花：無限畫整個圖（速度鎖步行）
   if (isSingleFlowerPlant()) {
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
-      speed_kmh: parseInt($speed.value),
       route: [parsedFlowers[0]],
       loop: true,
       mode: 'plant',
-      dwell_each_s: 0,
-      dwell_last_s: 0,
-      dwell_radius_m: 70,
-      quick_dwell_s: 0,
+      ...FIGURE,
     }));
     return;
   }
   if (!previewedRoute) return;
   const route = previewedRoute.ordered.slice(startFromIndex);
   if (route.length < 2) return;
-  // One-shot: walk the (possibly sliced) ordered flowers and stop at the last.
   const mode = getCruiseMode();
-  const isPlant = mode === 'plant';
+  if (mode === 'plant') {
+    // 多朵種花：每朵畫圖、停 dwell 秒、teleport 飛下一朵、無限循環。
+    ws.send(JSON.stringify({
+      type: 'start_loop_walk',
+      route,
+      loop: true,
+      mode: 'plant',
+      dwell_each_s: parseInt($dwellEach.value) || 60,
+      ...FIGURE,
+    }));
+    return;
+  }
+  // 採花 / 快速採花：維持原行為
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),
     route,
     loop: $loopChk.checked,
     mode,
-    dwell_each_s: isPlant ? (parseInt($dwellEach.value) || 0) : 0,
-    dwell_last_s: isPlant ? (parseInt($dwellLast.value) || 0) : 0,
+    dwell_each_s: 0,
+    dwell_last_s: 0,
     dwell_radius_m: 2.5,
     quick_dwell_s: 15,
   }));
