@@ -285,6 +285,50 @@ def jitter_position(pos: Waypoint, sigma_m: float, rng: random.Random) -> Waypoi
     return (lat + dlat, lon + dlon)
 
 
+def _segment_points(a: Waypoint, b: Waypoint, step_m: float) -> list[Waypoint]:
+    """Sample a great-circle segment from `a` (exclusive) to `b` (inclusive).
+
+    The first point returned is `step_m` past `a`; the last is exactly `b`
+    (step_toward snaps to the target on overshoot). `a` itself is omitted so
+    callers can chain segments without duplicating the shared vertex.
+    """
+    dist = haversine_m(a, b)
+    n = max(1, int(math.ceil(dist / step_m)))
+    return [step_toward(a, b, step_m * k) for k in range(1, n + 1)]
+
+
+def figure_points(
+    center: Waypoint,
+    circle_r_m: float,
+    tri_r_m: float,
+    step_m: float = 3.0,
+) -> list[Waypoint]:
+    """Closed polyline of a circle (radius `circle_r_m`) overlaid with a large
+    equilateral triangle (circumradius `tri_r_m`), centered on `center`.
+
+    Path order (one continuous closed loop):
+      circle (north → full turn) → radial connector out (circle_r → tri_r)
+      → triangle v1→v2→v3→v1 → radial connector back in → start.
+
+    Returned as (lat, lon) points spaced ~`step_m` apart; pts[0] == pts[-1].
+    """
+    pts: list[Waypoint] = []
+    circ_n = max(12, int(round(2 * math.pi * circle_r_m / step_m)))
+    for k in range(circ_n + 1):
+        ang = 2 * math.pi * k / circ_n
+        pts.append(destination_point(center, ang, circle_r_m))
+    north_in = destination_point(center, 0.0, circle_r_m)
+    v1 = destination_point(center, 0.0, tri_r_m)
+    v2 = destination_point(center, 2 * math.pi / 3, tri_r_m)
+    v3 = destination_point(center, 4 * math.pi / 3, tri_r_m)
+    pts += _segment_points(north_in, v1, step_m)
+    pts += _segment_points(v1, v2, step_m)
+    pts += _segment_points(v2, v3, step_m)
+    pts += _segment_points(v3, v1, step_m)
+    pts += _segment_points(v1, north_in, step_m)
+    return pts
+
+
 # --- Simulation -----------------------------------------------------------
 
 
