@@ -1908,9 +1908,12 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
         FIG_MPS = WALK_KMH * 1000.0 / 3600.0
         FIG_JITTER_M = 1.0
 
-        async def walk_figure(points, offset: float, seconds: float) -> float:
+        async def walk_figure(points: list[tuple[float, float]],
+                              offset: float, seconds: float) -> float:
             """沿閉合 polyline `points` 從 `offset`(公尺) 走 `seconds` 秒。
             回傳新的 offset。seconds=inf 時無限走（按停止才離開）。"""
+            if seconds <= 0:
+                return offset
             elapsed = 0.0
             prev = None
             while elapsed < seconds:
