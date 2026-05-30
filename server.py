@@ -1841,6 +1841,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     quick_dwell_s = float(msg.get("quick_dwell_s", 5))
     circle_r_m = float(msg.get("circle_r_m", 70.0))
     tri_r_m = float(msg.get("tri_r_m", 95.0))
+    laps_each = int(msg.get("laps_each", 1))  # 每朵把整個圖畫幾遍再飛下一朵
 
     if not raw_route:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
@@ -1954,14 +1955,16 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 await walk_figure(pts, 0.0, float("inf"))
                 return
 
-            # plant 多朵：每朵一條固定 figure + 各自的弧長進度（offset），
-            # 跨圈累加，把整個圖一段一段拼出來。
+            # plant 多朵：每朵畫完「整個圖」再飛下一朵。預存每朵的 figure 與其
+            # 總長，每次造訪沿圖走滿 laps_each 圈（全長 / 步行速度 × laps_each）。
             figpts: dict[int, list] = {}
-            progress: dict[int, float] = {}
+            figlen: dict[int, float] = {}
             if mode == "plant":
                 figpts = {i: figure_points(f, circle_r_m, tri_r_m)
                           for i, f in enumerate(route)}
-                progress = {i: 0.0 for i in range(len(route))}
+                figlen = {i: sum(haversine_m(p[k], p[k + 1])
+                                 for k in range(len(p) - 1))
+                          for i, p in figpts.items()}
 
             lap = 0
             while True:
@@ -1989,14 +1992,13 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 if mode == "plant":
                     for i, flower in enumerate(route):
                         pts = figpts[i]
-                        off = progress[i]
-                        start = point_at_offset(pts, off)
-                        await session.set_location(*start)
+                        # 飛到該朵 figure 起點 → 畫完整個圖 laps_each 圈 → 飛下一朵
+                        await session.set_location(*pts[0])
                         await ws.send_json({
-                            "type": "tick", "lat": start[0], "lon": start[1],
+                            "type": "tick", "lat": pts[0][0], "lon": pts[0][1],
                             "step_m": 0.0, "note": "teleport",
                         })
-                        progress[i] = await walk_figure(pts, off, dwell_each_s)
+                        await walk_figure(pts, 0.0, (figlen[i] / FIG_MPS) * laps_each)
                     continue  # plant 永遠循環
 
                 pos = route[0]

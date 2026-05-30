@@ -457,8 +457,8 @@ const Modal = {
 
     <div class="dwell-row" id="dwellRow" style="display:none;">
       <div class="field">
-        <span class="field-label">每朵停留秒數</span>
-        <input type="number" id="dwellEach" min="10" max="300" value="60" step="5">
+        <span class="field-label">每朵圈數（畫幾遍整個圖）</span>
+        <input type="number" id="lapsEach" min="1" max="10" value="1" step="1">
       </div>
     </div>
 
@@ -505,6 +505,8 @@ document.getElementById('layerControl').addEventListener('click', (e) => {
 let deviceMarker = null;
 const routeLine = L.polyline([], { color: '#ec4899', weight: 3, opacity: 0.7, dashArray: '6, 4' }).addTo(map);
 const trailLine = L.polyline([], { color: '#3b82f6', weight: 4, opacity: 0.9 }).addTo(map);
+// 多段軌跡：teleport（飛行）時開新段，段與段間不連線，避免橫跨地圖的直線。
+let trailSegs = [[]];
 const flowerMarkers = L.layerGroup().addTo(map);
 
 function updateDevice(lat, lon, pan = false) {
@@ -534,7 +536,7 @@ const $startFromRow = document.getElementById('startFromRow');
 const $startFrom = document.getElementById('startFrom');
 const $totalFlowers = document.getElementById('totalFlowers');
 const $loopChk = document.getElementById('loopChk');
-const $dwellEach = document.getElementById('dwellEach');
+const $lapsEach = document.getElementById('lapsEach');
 const $dwellRow = document.getElementById('dwellRow');
 const $modeRadios = document.querySelectorAll('input[name="cruiseMode"]');
 
@@ -847,7 +849,7 @@ function handleMessage(m) {
       isPaused = false; $btnPause.textContent = '⏸ 暫停';
       document.getElementById('statsRow').style.display = 'grid';
       resetStats(); startStatsTimer();
-      trailLine.setLatLngs([]);
+      trailSegs = [[]]; trailLine.setLatLngs([]);
       setStatus('巡航中…', 'running');
       break;
     case 'loop_lap':
@@ -856,10 +858,16 @@ function handleMessage(m) {
       break;
     case 'tick': {
       updateDevice(m.lat, m.lon);
-      trailLine.addLatLng([m.lat, m.lon]);
-      // 原地繞花會跑數小時 — 限制軌跡點數避免 polyline 無限增長拖慢瀏覽器
-      const pts = trailLine.getLatLngs();
-      if (pts.length > 600) trailLine.setLatLngs(pts.slice(-600));
+      if (m.note === 'teleport') {
+        trailSegs.push([[m.lat, m.lon]]);          // 飛行：開新段，不與上一朵連線
+      } else {
+        if (!trailSegs.length) trailSegs.push([]);
+        trailSegs[trailSegs.length - 1].push([m.lat, m.lon]);
+      }
+      // 會跑很久 — 限制總點數避免 polyline 無限增長拖慢瀏覽器（整段整段丟掉最舊的）
+      let total = trailSegs.reduce((n, s) => n + s.length, 0);
+      while (total > 600 && trailSegs.length > 1) { total -= trailSegs[0].length; trailSegs.shift(); }
+      trailLine.setLatLngs(trailSegs);
       totalDist += (m.step_m || 0);
       document.getElementById('statDist').textContent = (totalDist / 1000).toFixed(1);
       break;
@@ -909,13 +917,13 @@ $btnStart.addEventListener('click', () => {
   if (route.length < 2) return;
   const mode = getCruiseMode();
   if (mode === 'plant') {
-    // 多朵種花：每朵畫圖、停 dwell 秒、teleport 飛下一朵、無限循環。
+    // 多朵種花：每朵把整個圖畫完 laps_each 圈 → teleport 飛下一朵 → 無限循環。
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
       route,
       loop: true,
       mode: 'plant',
-      dwell_each_s: parseInt($dwellEach.value) || 60,
+      laps_each: parseInt($lapsEach.value) || 1,
       ...FIGURE,
     }));
     return;
