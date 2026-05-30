@@ -417,6 +417,7 @@ const Modal = {
       <textarea id="flowersText" placeholder="41.450779,31.795279&#10;41.449948,31.794372&#10;..."></textarea>
       <div class="parse-row">
         <span class="parse-info" id="parseInfo">尚未解析</span>
+        <button id="btnPerimeter" title="每朵花在其 25m 圓周上隨機取一點，複製到剪貼簿分享">📋 複製25m隨機點</button>
         <button id="btnClear">清空</button>
       </div>
     </div>
@@ -602,6 +603,29 @@ function haversineM(a, b) {
   const x = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon/2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(x));
 }
+// 從 (lat,lon) 朝 bearingRad（弧度，0=北）前進 distM 公尺。Mirrors pikmin_walk.destination_point。
+function destPoint(lat, lon, bearingRad, distM) {
+  const R = 6371000, rad = Math.PI / 180, deg = 180 / Math.PI;
+  const l1 = lat * rad, o1 = lon * rad, ang = distM / R;
+  const l2 = Math.asin(Math.sin(l1) * Math.cos(ang) + Math.cos(l1) * Math.sin(ang) * Math.cos(bearingRad));
+  const o2 = o1 + Math.atan2(Math.sin(bearingRad) * Math.sin(ang) * Math.cos(l1),
+                             Math.cos(ang) - Math.sin(l1) * Math.sin(l2));
+  return [l2 * deg, o2 * deg];
+}
+// 每朵花在其 25m 圓周上隨機取一點 → 複製到剪貼簿分享。
+async function copyPerimeterPoints() {
+  if (!parsedFlowers.length) { setStatus('還沒解析到花', 'error'); return; }
+  const lines = parsedFlowers.map(([lat, lon]) => {
+    const [la, lo] = destPoint(lat, lon, Math.random() * 2 * Math.PI, 25);
+    return `${la.toFixed(6)},${lo.toFixed(6)}`;
+  });
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'));
+    setStatus(`已複製 ${lines.length} 個 25m 圓周隨機點到剪貼簿`, '');
+  } catch (e) {
+    setStatus('複製失敗：' + e.message, 'error');
+  }
+}
 function pathDistM(points) {
   let s = 0;
   for (let i = 0; i < points.length - 1; i++) s += haversineM(points[i], points[i + 1]);
@@ -719,6 +743,7 @@ $btnClear.addEventListener('click', () => {
   $flowersText.value = '';
   updateParseInfo();
 });
+document.getElementById('btnPerimeter').addEventListener('click', copyPerimeterPoints);
 
 $speed.addEventListener('input', () => {
   $speedVal.textContent = `${$speed.value} km/h`;
