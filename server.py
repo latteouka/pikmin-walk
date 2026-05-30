@@ -594,31 +594,42 @@ class DeviceSession:
             pass
 
     async def _request_tunneld_wifi_tunnel(self) -> bool:
-        """Ask tunneld to establish a Wi-Fi tunnel for our target device.
+        """Ask tunneld to (re)discover our device over Wi-Fi and bring up a tunnel.
 
         tunneld v9.x is passive — it doesn't auto-fail-over from USB to Wi-Fi
         when USB drops, it just becomes empty. Without this nudge, an iOS 17+
         device on Wi-Fi is unreachable for the DVT path even though pair
-        record + Bonjour broadcast are fine. We hit /start-tunnel?udid=&ip=
-        with the cached last_wifi_host to force tunneld to bring it up.
+        record + Bonjour broadcast are fine.
+
+        Two things this MUST get right on pymobiledevice3 9.9.x:
+
+        1. **Pin ``connection_type=wifi``.** Without it, ``/start-tunnel`` tries
+           usbmux first and raises an *uncaught* ``DeviceNotFoundError`` when
+           the device isn't plugged in over USB — the endpoint 500s before it
+           ever reaches the Wi-Fi branch. (Older tunneld accepted a bare
+           ``?udid=&ip=`` and did the right thing; 9.9.x does not.)
+
+        2. **Do NOT pass a cached ``ip``.** The device's DHCP lease changes,
+           and tunneld's Wi-Fi branch *filters out* any Bonjour-resolved
+           service whose address ≠ the ``ip`` we send. Omitting ``ip`` lets
+           tunneld resolve the device's CURRENT address via Bonjour every
+           time, so a changed IP is always picked up automatically — no stale
+           ``last_wifi_host`` to go wrong.
         """
         if not TARGET_UDID:
             return False
-        wifi_host = _load_wifi_host()
-        if not wifi_host:
-            return False
         try:
             host, port = TUNNELD_DEFAULT_ADDRESS
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(
                     f"http://{host}:{port}/start-tunnel",
-                    params={"udid": TARGET_UDID, "ip": wifi_host},
+                    params={"udid": TARGET_UDID, "connection_type": "wifi"},
                 )
             if resp.status_code != 200:
                 return False
             data = resp.json()
             if data.get("interface") or data.get("address") or data.get("tunnel-port"):
-                print(f"  ↳ tunneld brought up Wi-Fi tunnel via {wifi_host}")
+                print(f"  ↳ tunneld brought up Wi-Fi tunnel for {TARGET_UDID} (Bonjour-resolved)")
                 return True
         except Exception as e:
             print(f"  ↳ tunneld /start-tunnel failed: {e}")
@@ -639,7 +650,13 @@ class DeviceSession:
         # one up before we give up on the DVT path.
         if not rsds:
             if await self._request_tunneld_wifi_tunnel():
-                await asyncio.sleep(2)  # give tunneld a moment to register
+                # Query IMMEDIATELY — do NOT sleep here. /start-tunnel returns
+                # 200 only *after* the tunnel is registered, so the device is
+                # already queryable. Critically, a freshly-created Wi-Fi
+                # RemotePairing tunnel idle-closes within ~1-2s if nothing
+                # consumes it — a sleep(2) here reliably races that timeout and
+                # finds an empty tunneld, which is exactly why Wi-Fi connect was
+                # failing. Grab the rsd and _enter_dvt right away to pin it.
                 try:
                     rsds = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
                 except Exception:
@@ -672,7 +689,8 @@ class DeviceSession:
                     print("  ↳ DVT entry failed; cancelling ghost tunnel + requesting Wi-Fi…")
                     await self._cancel_tunneld_for(rsd.udid)
                     if await self._request_tunneld_wifi_tunnel():
-                        await asyncio.sleep(2)
+                        # Query immediately (no sleep) — the Wi-Fi tunnel
+                        # idle-closes in ~1-2s if unconsumed; see note above.
                         try:
                             rsds2 = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
                         except Exception:
