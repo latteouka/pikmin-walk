@@ -910,8 +910,8 @@ function handleMessage(m) {
 }
 
 $btnStart.addEventListener('click', () => {
-  // 種花已調校到最佳值，寫死不開放調整：半徑 25m、~19km/h、每朵繞一圈 ~30s。
-  const PLANT = { dwell_radius_m: 25, speed_kmh: 19, dwell_each_s: 30 };
+  // 種花已調校到最佳值，寫死不開放調整：半徑 25m、~14km/h、每朵繞一圈 ~40s。
+  const PLANT = { dwell_radius_m: 25, speed_kmh: 14, dwell_each_s: 40 };
   // 原地單朵種花：無限繞圓
   if (isSingleFlowerPlant()) {
     ws.send(JSON.stringify({
