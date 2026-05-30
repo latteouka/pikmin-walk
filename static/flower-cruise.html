@@ -457,8 +457,8 @@ const Modal = {
 
     <div class="control-row" id="radiusRow" style="display:none;">
       <label>圓半徑</label>
-      <input type="range" id="circleRadius" min="10" max="150" value="30" step="5">
-      <span class="value" id="radiusVal">30 m</span>
+      <input type="range" id="circleRadius" min="10" max="150" value="25" step="5">
+      <span class="value" id="radiusVal">25 m</span>
     </div>
 
     <div class="dwell-row" id="dwellRow" style="display:none;">
@@ -567,12 +567,10 @@ const $speedRow = document.getElementById('speedRow');
 const $loopRow = document.querySelector('.loop-row');
 function syncModeUI() {
   const isPlant = getCruiseMode() === 'plant';
-  // 多朵種花才顯示「每朵停留秒數」
-  $dwellRow.style.display = (isPlant && parsedFlowers.length >= 2) ? 'grid' : 'none';
-  // 種花顯示圓半徑滑桿（單朵/多朵皆可調）
-  $radiusRow.style.display = isPlant ? 'flex' : 'none';
-  // 速度滑桿：種花也開放（可拉快，PB 種花上限 ~6km/h，超過可能不算）
-  $speedRow.style.display = 'flex';
+  // 種花已調校到最佳值（半徑25m·~19km/h·約30s/圈），不開放調整 → 全部藏起來
+  $dwellRow.style.display = 'none';
+  $radiusRow.style.display = 'none';
+  $speedRow.style.display = isPlant ? 'none' : 'flex';
   // plant 仰賴循環 → 強制開、隱藏 loop 開關
   if (isPlant) { $loopChk.checked = true; }
   $loopRow.style.display = isPlant ? 'none' : 'flex';
@@ -912,38 +910,41 @@ function handleMessage(m) {
 }
 
 $btnStart.addEventListener('click', () => {
-  const radius = parseInt($circleRadius.value) || 70;
-  const speed = parseInt($speed.value) || 5;
-  // 原地單朵種花：無限繞圓（半徑 radius、速度可調）
+  // 種花已調校到最佳值，寫死不開放調整：半徑 25m、~19km/h、每朵繞一圈 ~30s。
+  const PLANT = { dwell_radius_m: 25, speed_kmh: 19, dwell_each_s: 30 };
+  // 原地單朵種花：無限繞圓
   if (isSingleFlowerPlant()) {
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
-      speed_kmh: speed,
       route: [parsedFlowers[0]],
       loop: true,
       mode: 'plant',
-      dwell_radius_m: radius,
+      speed_kmh: PLANT.speed_kmh,
+      dwell_radius_m: PLANT.dwell_radius_m,
     }));
     return;
   }
   if (!previewedRoute) return;
-  const route = previewedRoute.ordered.slice(startFromIndex);
-  if (route.length < 2) return;
   const mode = getCruiseMode();
   if (mode === 'plant') {
-    // 多朵種花：飛到每朵 → 繞圓 dwell_each_s 秒 → 飛下一朵 → 無限循環。
+    // 多朵種花：送「完整 route + start_index」。第一圈從 start_index 起跑
+    // （前面跳過），第二圈起每圈都跑完整 1→N。飛到每朵 → 繞一圈(~30s) → 飛下一朵 → 循環。
+    if (previewedRoute.ordered.length < 2) return;
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
-      speed_kmh: speed,
-      route,
+      route: previewedRoute.ordered,
+      start_index: startFromIndex,
       loop: true,
       mode: 'plant',
-      dwell_each_s: parseInt($dwellEach.value) || 40,
-      dwell_radius_m: radius,
+      speed_kmh: PLANT.speed_kmh,
+      dwell_each_s: PLANT.dwell_each_s,
+      dwell_radius_m: PLANT.dwell_radius_m,
     }));
     return;
   }
-  // 採花 / 快速採花：維持原行為
+  const route = previewedRoute.ordered.slice(startFromIndex);
+  if (route.length < 2) return;
+  // 採花 / 快速採花：維持原行為（從 startFrom 切到結尾）
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
     speed_kmh: parseInt($speed.value),

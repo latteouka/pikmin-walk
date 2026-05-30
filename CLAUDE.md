@@ -65,9 +65,10 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 
 - 種花模式（`mode: plant`）每朵花原地繞一個圓（`pikmin_walk.circle_walk`；半徑 `dwell_radius_m`，速度吃 `session.live_speed_kmh`，滑桿即時生效）。
 - **多朵**：`_handle_start_loop_walk` 飛到每朵（teleport 到花中心）→ `orbit_at_flower` 繞圓 `dwell_each_s` 秒 → 飛下一朵 → **無限循環**（plant 永遠 loop，忽略 loop flag）。前端軌跡在 teleport 處**斷段**（`trailSegs`，不連橫跨地圖的直線）。
+- **`start_index`（從第 N 朵開始）**：前端送**完整 route** + `start_index`（= 前端 `startFromIndex`）。server 只在 **第一圈** 跳過 `i < start_index` 的花；**第二圈起跑完整 1→N 循環**。所以「從第4朵開始」= 第一圈 4→N，之後 1→N 一直循環。
 - **單朵**（route 長度 1）：`orbit_at_flower(route[0], float("inf"), report_steps=True)` 原地無限繞圓，按停止（`CancelledError`）才結束。
-- 前端 `flower-cruise.html` plant 模式：**圓半徑滑桿**（10–150m，預設 30）+ **速度滑桿** + **每朵停留秒數**（預設 40）；強制 loop、隱藏 loop 開關。送出 `dwell_radius_m` / `speed_kmh` / `dwell_each_s`。
-- **半徑 vs 65m 精度**：iOS `horizontalAccuracy` 鎖 65m。原認為半徑 < 65m 會被雜訊埋掉不種（單朵 10m 圈曾原地抖動 → 當初用 70m）。但密集花（間距 ~90m）下 70m 圓嚴重重疊，使用者實測 **20–30m 小圓在多朵巡航下可用**——最佳半徑用滑桿在真機微調，別寫死。
+- 前端 `flower-cruise.html` plant 模式：**已調校到最佳值、寫死不開放調整**——半徑 **25m**、速度 **~19 km/h**、每朵繞**一圈 ~30s**（送 `dwell_radius_m:25` / `speed_kmh:19` / `dwell_each_s:30`，單朵不送 dwell=無限繞）。強制 loop、隱藏所有滑桿（`PLANT` 常數）。harvest/quick_harvest 仍有速度滑桿。
+- **半徑與 65m「精度牆」其實沒擋住**：iOS `horizontalAccuracy` 鎖 65m，原以為半徑 < 65m 會被雜訊埋掉不種（單朵 10m 圈曾原地抖動 → 當初用 70m）。但使用者**真機實測 25m 半徑 + ~19 km/h 照樣種得到**——推翻舊認知，65m/6km/h 不是硬牆（至少多朵巡航下）。25m 也避開密集花（間距 ~90m）的圓重疊問題。
 - **歷史**：曾實作「圓+大三角形拼花」（`figure_points`/`point_at_offset`，仍留在 `pikmin_walk.py` + `tests/test_figure.py`），因視覺雜亂 + 只要圓而改回純圓；這兩個 helper 目前 server 未使用（dead code，未來要嘛重用、要嘛清掉）。
 
 ### Wi-Fi pair record 的路徑

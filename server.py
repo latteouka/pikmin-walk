@@ -1836,6 +1836,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     loop_mode = bool(msg.get("loop", True))
     mode = str(msg.get("mode", "harvest"))  # harvest | plant | quick_harvest
     dwell_each_s = float(msg.get("dwell_each_s", 0))
+    start_index = int(msg.get("start_index", 0))  # plant：第一圈從第幾朵起跑（之後跑完整route）
     dwell_last_s = float(msg.get("dwell_last_s", 0))
     dwell_radius_m = float(msg.get("dwell_radius_m", 2.5))
     quick_dwell_s = float(msg.get("quick_dwell_s", 5))
@@ -1945,8 +1946,11 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                     continue
 
                 if mode == "plant":
-                    # 飛到每朵 → 原地繞圓 dwell_each_s 秒（半徑 dwell_radius_m）→ 飛下一朵 → 循環
-                    for flower in route:
+                    # 飛到每朵 → 原地繞圓 dwell_each_s 秒（半徑 dwell_radius_m）→ 飛下一朵 → 循環。
+                    # 第一圈可從 start_index 起跑（前面跳過）；第二圈起跑完整 route。
+                    for i, flower in enumerate(route):
+                        if lap == 1 and i < start_index:
+                            continue
                         await session.set_location(*flower)
                         await ws.send_json({
                             "type": "tick", "lat": flower[0], "lon": flower[1],
