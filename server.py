@@ -1939,7 +1939,9 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                             "step_m": 0.0, "note": "teleport",
                         })
                         await orbit_at_flower(flower, dwell_each_s, report_steps=True)
-                    continue  # plant 永遠循環
+                    if lap >= 2:
+                        break  # 種花最多 2 輪（第 2 輪通常就完成工作）
+                    continue
 
                 # 採花 (harvest)：同種花的 teleport+orbit，每朵繞 dwell_each_s 秒。
                 # 第一圈可從 start_index 起跑（前面跳過）；尊重 loop_mode（預設不勾＝跑一輪就停，

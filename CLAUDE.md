@@ -64,8 +64,8 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 ### 花朵巡航：繞圓種花
 
 - 種花模式（`mode: plant`）每朵花原地繞一個圓（`pikmin_walk.circle_walk`；半徑 `dwell_radius_m`，速度吃 `session.live_speed_kmh`，滑桿即時生效）。
-- **多朵**：`_handle_start_loop_walk` 飛到每朵（teleport 到花中心）→ `orbit_at_flower` 繞圓 `dwell_each_s` 秒 → 飛下一朵 → **無限循環**（plant 永遠 loop，忽略 loop flag）。前端軌跡在 teleport 處**斷段**（`trailSegs`，不連橫跨地圖的直線）。
-- **`start_index`（從第 N 朵開始）**：**種花與採花都用**這套——前端送**完整 route** + `start_index`（= `startFromIndex`）。server 只在 **第一圈** 跳過 `i < start_index` 的花；**第二圈起跑完整 1→N**（種花永遠循環；採花要勾 loop 才會有第二圈）。所以「從第 4 朵開始」= 第一圈 4→N、之後 1→N。`startFrom` 可選到**最後一朵**（max = 花數，不是花數−1），從最後一朵開始 = 第一圈只跑該朵、之後跑完整循環。
+- **多朵**：`_handle_start_loop_walk` 飛到每朵（teleport 到花中心）→ `orbit_at_flower` 繞圓 `dwell_each_s` 秒 → 飛下一朵 → **最多 2 輪**（`if lap >= 2: break`；第 2 輪通常就完成工作，忽略 loop flag）。前端軌跡在 teleport 處**斷段**（`trailSegs`，不連橫跨地圖的直線）。單朵則 `orbit_at_flower(inf)` 無限繞、按停止才停。
+- **`start_index`（從第 N 朵開始）**：**種花與採花都用**這套——前端送**完整 route** + `start_index`（= `startFromIndex`）。server 只在 **第一圈** 跳過 `i < start_index` 的花；**第二圈起跑完整 1→N**（種花一定跑到第 2 輪、共 2 輪後停；採花要勾 loop 才會有第二圈）。所以「從第 4 朵開始」= 第一圈 4→N、之後 1→N。`startFrom` 可選到**最後一朵**（max = 花數，不是花數−1），從最後一朵開始 = 第一圈只跑該朵、之後跑完整循環。
 - **單朵**（route 長度 1）：`orbit_at_flower(route[0], float("inf"), report_steps=True)` 原地無限繞圓，按停止（`CancelledError`）才結束。
 - 前端 `flower-cruise.html` plant 模式：**已調校到最佳值、寫死不開放調整**——半徑 **25m**、速度 **~14 km/h**、每朵繞**一圈 ~40s**（送 `dwell_radius_m:25` / `speed_kmh:14` / `dwell_each_s:40`，單朵不送 dwell=無限繞）。強制 loop、隱藏所有滑桿（`PLANT` 常數）。
 - **採花 (harvest)**：跟種花同一套 teleport+orbit 邏輯，但每朵 **15s**、半徑 25m、~14km/h，且**尊重 loop 開關（前端預設不勾＝跑一輪就停）**。同樣不開放調整滑桿、有「飛到第一朵」按鈕。**只剩 種花/採花 兩個模式**——舊的 `quick_harvest`（快速採花）已移除（採花已是 teleport 版、重複）。server 端採花分支 = `for flower: teleport + orbit_at_flower(flower, dwell_each_s)` + `if not loop_mode: break`。
