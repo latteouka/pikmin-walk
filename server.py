@@ -1927,24 +1927,6 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 lap += 1
                 await ws.send_json({"type": "loop_lap", "lap": lap})
 
-                if mode == "quick_harvest":
-                    # Teleport to each flower in turn, briefly orbit so the
-                    # GPS isn't perfectly stationary between teleports, then
-                    # jump to the next.
-                    for target in route:
-                        await session.set_location(*target)
-                        await ws.send_json({
-                            "type": "tick",
-                            "lat": target[0],
-                            "lon": target[1],
-                            "step_m": 0.0,
-                            "note": "teleport",
-                        })
-                        await orbit_at_flower(target, quick_dwell_s)
-                    if not loop_mode:
-                        break
-                    continue
-
                 if mode == "plant":
                     # 飛到每朵 → 原地繞圓 dwell_each_s 秒（半徑 dwell_radius_m）→ 飛下一朵 → 循環。
                     # 第一圈可從 start_index 起跑（前面跳過）；第二圈起跑完整 route。
@@ -1959,38 +1941,15 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                         await orbit_at_flower(flower, dwell_each_s, report_steps=True)
                     continue  # plant 永遠循環
 
-                pos = route[0]
-                await session.set_location(*pos)
-                # First flower also gets a dwell — gives Pikmin Bloom time to
-                # register the lap-start location before we walk away.
-                await orbit_at_flower(pos, dwell_each_s)
-
-                targets = route[1:]
-                for i, target in enumerate(targets):
-                    is_last = (i == len(targets) - 1)
-                    while haversine_m(pos, target) > 1.0:
-                        # Read live speed each tick so slider changes apply instantly
-                        cur_speed_mps = session.live_speed_kmh * 1000 / 3600
-                        step_m = cur_speed_mps * tick_s * (1 + rng.gauss(0, 0.10))
-                        step_m = max(0.5, step_m)
-                        pos = step_toward(pos, target, step_m)
-                        noisy = jitter_position(pos, 1.0, rng)
-                        await session.set_location(*noisy)
-                        await ws.send_json({
-                            "type": "tick",
-                            "lat": noisy[0],
-                            "lon": noisy[1],
-                            "step_m": step_m,
-                        })
-                        await asyncio.sleep(tick_s)
-                        while session.paused:
-                            await asyncio.sleep(0.5)
-
-                    # Reached this flower — orbit it before moving on.
-                    # Last flower of the route gets the longer "久留" dwell.
-                    pos = target
-                    await orbit_at_flower(target, dwell_last_s if is_last else dwell_each_s)
-
+                # 採花 (harvest)：同種花的 teleport+orbit，每朵繞 dwell_each_s 秒，
+                # 但尊重 loop_mode（前端預設不勾 = 跑一輪就停）。
+                for flower in route:
+                    await session.set_location(*flower)
+                    await ws.send_json({
+                        "type": "tick", "lat": flower[0], "lon": flower[1],
+                        "step_m": 0.0, "note": "teleport",
+                    })
+                    await orbit_at_flower(flower, dwell_each_s, report_steps=True)
                 if not loop_mode:
                     break
 

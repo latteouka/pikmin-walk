@@ -444,10 +444,6 @@ const Modal = {
         <input type="radio" name="cruiseMode" value="plant">
         <span>🌱 種花</span>
       </label>
-      <label>
-        <input type="radio" name="cruiseMode" value="quick_harvest">
-        <span>⚡ 快速採花</span>
-      </label>
     </div>
 
     <div class="loop-row">
@@ -581,14 +577,13 @@ const $speedRow = document.getElementById('speedRow');
 const $loopRow = document.querySelector('.loop-row');
 function syncModeUI() {
   const isPlant = getCruiseMode() === 'plant';
-  // 種花已調校到最佳值（半徑25m·~19km/h·約30s/圈），不開放調整 → 全部藏起來
+  // 種花/採花都已調校到最佳值、不開放調整 → 半徑/速度/停留滑桿全藏
   $dwellRow.style.display = 'none';
   $radiusRow.style.display = 'none';
-  $speedRow.style.display = isPlant ? 'none' : 'flex';
-  // 種花才顯示「飛到第一朵花看看」預覽按鈕
-  $gotoFirstRow.style.display = isPlant ? 'flex' : 'none';
-  // plant 仰賴循環 → 強制開、隱藏 loop 開關
-  if (isPlant) { $loopChk.checked = true; }
+  $speedRow.style.display = 'none';
+  // 兩種模式都顯示「飛到第一朵花看看」預覽按鈕
+  $gotoFirstRow.style.display = 'flex';
+  // 種花永遠循環（payload 寫死 loop:true）→ 隱藏 loop 開關；採花保留開關、預設不勾
   $loopRow.style.display = isPlant ? 'none' : 'flex';
 }
 $modeRadios.forEach(r => r.addEventListener('change', () => {
@@ -960,17 +955,15 @@ $btnStart.addEventListener('click', () => {
   }
   const route = previewedRoute.ordered.slice(startFromIndex);
   if (route.length < 2) return;
-  // 採花 / 快速採花：維持原行為（從 startFrom 切到結尾）
+  // 採花：跟種花一樣 teleport+orbit，但每朵 15s、循環吃勾選（預設不勾＝跑一輪就停）。
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
-    speed_kmh: parseInt($speed.value),
     route,
     loop: $loopChk.checked,
-    mode,
-    dwell_each_s: 0,
-    dwell_last_s: 0,
-    dwell_radius_m: 2.5,
-    quick_dwell_s: 15,
+    mode: 'harvest',
+    speed_kmh: 14,
+    dwell_each_s: 15,
+    dwell_radius_m: 25,
   }));
 });
 
