@@ -464,7 +464,7 @@ const Modal = {
     <div class="dwell-row" id="dwellRow" style="display:none;">
       <div class="field">
         <span class="field-label">每朵停留秒數</span>
-        <input type="number" id="dwellEach" min="10" max="600" value="60" step="10">
+        <input type="number" id="dwellEach" min="10" max="600" value="40" step="10">
       </div>
     </div>
 
@@ -938,7 +938,7 @@ $btnStart.addEventListener('click', () => {
       route,
       loop: true,
       mode: 'plant',
-      dwell_each_s: parseInt($dwellEach.value) || 60,
+      dwell_each_s: parseInt($dwellEach.value) || 40,
       dwell_radius_m: radius,
     }));
     return;

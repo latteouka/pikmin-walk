@@ -61,14 +61,14 @@ Browser (Leaflet)  ←WebSocket→  server.py (Starlette)  ←DVT/Lockdown→  i
 - **Trail repulsion**: 最近 300 ticks 的位置作為 inverse-square repulsion field，避免短期重複踩同一條路
 - **Position jitter 不回寫**: yield 的是 noisy 座標，但 `current` 保持 clean — 防止 random walk drift
 
-### 花朵巡航：圓＋大三角形拼花
+### 花朵巡航：繞圓種花
 
-- 種花模式（`mode: plant`）每朵花原地畫一個「圓(70m) ＋ 大三角形(角95m)」的固定 polyline（`pikmin_walk.figure_points`，閉合；`point_at_offset` 依弧長取點）。
-- **多朵**：`_handle_start_loop_walk` 對每朵 teleport 到該朵圖的進度點 → `walk_figure` 沿圖走 `dwell_each_s`(預設 60s ≈ 75m) → 飛下一朵 → **無限循環**（plant 永遠 loop，忽略 loop flag）。每朵維護自己的弧長 offset（`progress[i]`），跨圈一段一段把整個圖拼出來（約 13 圈畫滿一輪後重疊續種）。
-- **單朵**（route 長度 1）：`walk_figure(figure_points(...), 0.0, inf)` 原地無限畫整個圖，按停止（`CancelledError`）才結束。
-- 速度鎖在 `circle` profile 的 **~4.5 km/h** 步行速度（前端 plant 模式隱藏速度滑桿、強制 loop）。
-- **為什麼半徑 70/95m**：iOS simulate-location 的 `horizontalAccuracy` 硬性回報 65m，半徑 < 65m 整個埋在 GPS 誤差圓裡 → Pikmin Bloom 分不出移動／雜訊 → 不種花。圓 70m（直徑 140m）已驗證穩過 65m 地板；大三角形角伸到 95m、邊切過內部（最近 ~47m）覆蓋中央。
-- **為什麼分多圈拼**：>65m 的圖走完要 ~6 分，60s/朵畫不完；分散到多圈既保持每朵停留短、又每次都有效（種花量只看總步行時間）。`circle_r_m` / `tri_r_m` / `dwell_each_s` 由前端送出（server 帶預設 70/95/60）。
+- 種花模式（`mode: plant`）每朵花原地繞一個圓（`pikmin_walk.circle_walk`；半徑 `dwell_radius_m`，速度吃 `session.live_speed_kmh`，滑桿即時生效）。
+- **多朵**：`_handle_start_loop_walk` 飛到每朵（teleport 到花中心）→ `orbit_at_flower` 繞圓 `dwell_each_s` 秒 → 飛下一朵 → **無限循環**（plant 永遠 loop，忽略 loop flag）。前端軌跡在 teleport 處**斷段**（`trailSegs`，不連橫跨地圖的直線）。
+- **單朵**（route 長度 1）：`orbit_at_flower(route[0], float("inf"), report_steps=True)` 原地無限繞圓，按停止（`CancelledError`）才結束。
+- 前端 `flower-cruise.html` plant 模式：**圓半徑滑桿**（10–150m，預設 30）+ **速度滑桿** + **每朵停留秒數**（預設 40）；強制 loop、隱藏 loop 開關。送出 `dwell_radius_m` / `speed_kmh` / `dwell_each_s`。
+- **半徑 vs 65m 精度**：iOS `horizontalAccuracy` 鎖 65m。原認為半徑 < 65m 會被雜訊埋掉不種（單朵 10m 圈曾原地抖動 → 當初用 70m）。但密集花（間距 ~90m）下 70m 圓嚴重重疊，使用者實測 **20–30m 小圓在多朵巡航下可用**——最佳半徑用滑桿在真機微調，別寫死。
+- **歷史**：曾實作「圓+大三角形拼花」（`figure_points`/`point_at_offset`，仍留在 `pikmin_walk.py` + `tests/test_figure.py`），因視覺雜亂 + 只要圓而改回純圓；這兩個 helper 目前 server 未使用（dead code，未來要嘛重用、要嘛清掉）。
 
 ### Wi-Fi pair record 的路徑
 
