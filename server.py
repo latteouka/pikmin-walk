@@ -1941,9 +1941,12 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                         await orbit_at_flower(flower, dwell_each_s, report_steps=True)
                     continue  # plant 永遠循環
 
-                # 採花 (harvest)：同種花的 teleport+orbit，每朵繞 dwell_each_s 秒，
-                # 但尊重 loop_mode（前端預設不勾 = 跑一輪就停）。
-                for flower in route:
+                # 採花 (harvest)：同種花的 teleport+orbit，每朵繞 dwell_each_s 秒。
+                # 第一圈可從 start_index 起跑（前面跳過）；尊重 loop_mode（預設不勾＝跑一輪就停，
+                # 勾了則第二圈起跑完整 route）。
+                for i, flower in enumerate(route):
+                    if lap == 1 and i < start_index:
+                        continue
                     await session.set_location(*flower)
                     await ws.send_json({
                         "type": "tick", "lat": flower[0], "lon": flower[1],

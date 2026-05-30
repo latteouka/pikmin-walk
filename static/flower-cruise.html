@@ -732,8 +732,8 @@ $startFrom.addEventListener('input', () => {
   if (!previewedRoute) return;
   let v = parseInt($startFrom.value);
   if (isNaN(v)) return;
-  // Clamp to [1, count - 1] so the slice always has ≥ 2 flowers
-  v = Math.max(1, Math.min(previewedRoute.count - 1, v));
+  // 可選到最後一朵：送完整 route + start_index，第一圈從這裡起跑、之後跑完整循環
+  v = Math.max(1, Math.min(previewedRoute.count, v));
   startFromIndex = v - 1;
   redrawForStart();
 });
@@ -787,7 +787,7 @@ $btnInOrder.addEventListener('click', () => {
     count: ordered.length,
   };
   startFromIndex = 0;
-  $startFrom.max = String(Math.max(1, ordered.length - 1));
+  $startFrom.max = String(Math.max(1, ordered.length));
   $startFrom.value = '1';
   $totalFlowers.textContent = String(ordered.length);
   $startFromRow.style.display = 'flex';
@@ -825,7 +825,7 @@ $btnPreview.addEventListener('click', async () => {
     };
     // Reset start-from selector for the new preview
     startFromIndex = 0;
-    $startFrom.max = String(Math.max(1, data.count - 1));
+    $startFrom.max = String(Math.max(1, data.count));
     $startFrom.value = '1';
     $totalFlowers.textContent = String(data.count);
     $startFromRow.style.display = 'flex';
@@ -953,12 +953,13 @@ $btnStart.addEventListener('click', () => {
     }));
     return;
   }
-  const route = previewedRoute.ordered.slice(startFromIndex);
-  if (route.length < 2) return;
-  // 採花：跟種花一樣 teleport+orbit，但每朵 15s、循環吃勾選（預設不勾＝跑一輪就停）。
+  if (previewedRoute.ordered.length < 1) return;
+  // 採花：跟種花一樣送完整 route + start_index（第一圈從 start_index 起跑），
+  // teleport+orbit、每朵 15s、循環吃勾選（預設不勾＝跑一輪就停）。
   ws.send(JSON.stringify({
     type: 'start_loop_walk',
-    route,
+    route: previewedRoute.ordered,
+    start_index: startFromIndex,
     loop: $loopChk.checked,
     mode: 'harvest',
     speed_kmh: 14,
