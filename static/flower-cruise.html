@@ -473,6 +473,10 @@ const Modal = {
       <div class="stat"><div class="num" id="statTime">0:00</div><div class="label">時間</div></div>
     </div>
 
+    <div class="btn-row" id="gotoFirstRow" style="display:none;">
+      <button id="btnGotoFirst">🔍 飛到第一朵花看看</button>
+    </div>
+
     <div class="btn-row">
       <button id="btnInOrder">↕ 按照順序</button>
       <button id="btnPreview">🗺 預覽路線</button>
@@ -536,6 +540,16 @@ const $btnInOrder = document.getElementById('btnInOrder');
 const $btnStart = document.getElementById('btnStart');
 const $btnStop = document.getElementById('btnStop');
 const $btnPause = document.getElementById('btnPause');
+const $btnGotoFirst = document.getElementById('btnGotoFirst');
+const $gotoFirstRow = document.getElementById('gotoFirstRow');
+// 種花開始前：先把裝置瞬移到第一朵花、地圖也飛過去，確認位置對不對。
+$btnGotoFirst.addEventListener('click', () => {
+  const f = parsedFlowers[0];
+  if (!f) { setStatus('還沒解析到花', 'error'); return; }
+  ws.send(JSON.stringify({ type: 'teleport', lat: f[0], lon: f[1] }));
+  map.setView([f[0], f[1]], Math.max(map.getZoom(), 16));
+  setStatus('已瞬移到第一朵花', '');
+});
 const $status = document.getElementById('statusLine');
 const $deviceStatus = document.getElementById('deviceStatus');
 const $startFromRow = document.getElementById('startFromRow');
@@ -571,6 +585,8 @@ function syncModeUI() {
   $dwellRow.style.display = 'none';
   $radiusRow.style.display = 'none';
   $speedRow.style.display = isPlant ? 'none' : 'flex';
+  // 種花才顯示「飛到第一朵花看看」預覽按鈕
+  $gotoFirstRow.style.display = isPlant ? 'flex' : 'none';
   // plant 仰賴循環 → 強制開、隱藏 loop 開關
   if (isPlant) { $loopChk.checked = true; }
   $loopRow.style.display = isPlant ? 'none' : 'flex';
