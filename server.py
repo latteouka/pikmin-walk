@@ -1839,9 +1839,6 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
     dwell_last_s = float(msg.get("dwell_last_s", 0))
     dwell_radius_m = float(msg.get("dwell_radius_m", 2.5))
     quick_dwell_s = float(msg.get("quick_dwell_s", 5))
-    circle_r_m = float(msg.get("circle_r_m", 70.0))
-    tri_r_m = float(msg.get("tri_r_m", 95.0))
-    laps_each = int(msg.get("laps_each", 1))  # 每朵把整個圖畫幾遍再飛下一朵
 
     if not raw_route:
         await ws.send_json({"type": "error", "message": "先按「預覽路線」"})
@@ -1860,8 +1857,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
 
     async def runner() -> None:
         rng = random.Random()
-        from pikmin_walk import (haversine_m, step_toward, jitter_position,
-                                 circle_walk, figure_points, point_at_offset, PROFILES)
+        from pikmin_walk import haversine_m, step_toward, jitter_position, circle_walk, PROFILES
 
         async def orbit_at_flower(
             center: tuple[float, float],
@@ -1881,7 +1877,7 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 profile=profile,
                 rng=rng,
                 get_radius=lambda: dwell_radius_m,
-                get_speed_kmh=lambda: profile.nominal_kmh,
+                get_speed_kmh=lambda: session.live_speed_kmh or profile.nominal_kmh,
             )
             elapsed = 0.0
             prev: tuple[float, float] | None = None
@@ -1905,35 +1901,6 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                 while session.paused:
                     await asyncio.sleep(0.5)
 
-        WALK_KMH = PROFILES["circle"].nominal_kmh   # ~4.5 km/h，鎖步行
-        FIG_MPS = WALK_KMH * 1000.0 / 3600.0
-        FIG_JITTER_M = 1.0
-
-        async def walk_figure(points: list[tuple[float, float]],
-                              offset: float, seconds: float) -> float:
-            """沿閉合 polyline `points` 從 `offset`(公尺) 走 `seconds` 秒。
-            回傳新的 offset。seconds=inf 時無限走（按停止才離開）。"""
-            if seconds <= 0:
-                return offset
-            elapsed = 0.0
-            prev = None
-            while elapsed < seconds:
-                offset += FIG_MPS * tick_s
-                pos = point_at_offset(points, offset)
-                noisy = jitter_position(pos, FIG_JITTER_M, rng)
-                await session.set_location(*noisy)
-                step_m = haversine_m(prev, noisy) if prev is not None else 0.0
-                prev = noisy
-                await ws.send_json({
-                    "type": "tick", "lat": noisy[0], "lon": noisy[1],
-                    "step_m": step_m, "note": "figure",
-                })
-                await asyncio.sleep(tick_s)
-                elapsed += tick_s
-                while session.paused:
-                    await asyncio.sleep(0.5)
-            return offset
-
         try:
             loop_dist = sum(haversine_m(route[i], route[i + 1]) for i in range(len(route) - 1))
 
@@ -1950,21 +1917,9 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
             # 正常情況下 orbit_at_flower 只在按停止（CancelledError）時離開；
             # 若 dwell_radius_m <= 0（異常 payload）它會立即返回，故保留 return 收尾。
             if len(route) == 1:
-                # 種花：原地無限畫整個「圓＋大三角形」圖。
-                pts = figure_points(route[0], circle_r_m, tri_r_m)
-                await walk_figure(pts, 0.0, float("inf"))
+                # 種花單朵：原地無限繞圓（半徑 dwell_radius_m），按停止才結束。
+                await orbit_at_flower(route[0], float("inf"), report_steps=True)
                 return
-
-            # plant 多朵：每朵畫完「整個圖」再飛下一朵。預存每朵的 figure 與其
-            # 總長，每次造訪沿圖走滿 laps_each 圈（全長 / 步行速度 × laps_each）。
-            figpts: dict[int, list] = {}
-            figlen: dict[int, float] = {}
-            if mode == "plant":
-                figpts = {i: figure_points(f, circle_r_m, tri_r_m)
-                          for i, f in enumerate(route)}
-                figlen = {i: sum(haversine_m(p[k], p[k + 1])
-                                 for k in range(len(p) - 1))
-                          for i, p in figpts.items()}
 
             lap = 0
             while True:
@@ -1990,15 +1945,14 @@ async def _handle_start_loop_walk(ws: WebSocket, msg: dict) -> None:
                     continue
 
                 if mode == "plant":
-                    for i, flower in enumerate(route):
-                        pts = figpts[i]
-                        # 飛到該朵 figure 起點 → 畫完整個圖 laps_each 圈 → 飛下一朵
-                        await session.set_location(*pts[0])
+                    # 飛到每朵 → 原地繞圓 dwell_each_s 秒（半徑 dwell_radius_m）→ 飛下一朵 → 循環
+                    for flower in route:
+                        await session.set_location(*flower)
                         await ws.send_json({
-                            "type": "tick", "lat": pts[0][0], "lon": pts[0][1],
+                            "type": "tick", "lat": flower[0], "lon": flower[1],
                             "step_m": 0.0, "note": "teleport",
                         })
-                        await walk_figure(pts, 0.0, (figlen[i] / FIG_MPS) * laps_each)
+                        await orbit_at_flower(flower, dwell_each_s, report_steps=True)
                     continue  # plant 永遠循環
 
                 pos = route[0]

@@ -455,10 +455,16 @@ const Modal = {
       <label for="loopChk">跑完後循環（預設關閉）</label>
     </div>
 
+    <div class="control-row" id="radiusRow" style="display:none;">
+      <label>圓半徑</label>
+      <input type="range" id="circleRadius" min="50" max="150" value="70" step="5">
+      <span class="value" id="radiusVal">70 m</span>
+    </div>
+
     <div class="dwell-row" id="dwellRow" style="display:none;">
       <div class="field">
-        <span class="field-label">每朵圈數（畫幾遍整個圖）</span>
-        <input type="number" id="lapsEach" min="1" max="10" value="1" step="1">
+        <span class="field-label">每朵停留秒數</span>
+        <input type="number" id="dwellEach" min="10" max="600" value="60" step="10">
       </div>
     </div>
 
@@ -536,8 +542,12 @@ const $startFromRow = document.getElementById('startFromRow');
 const $startFrom = document.getElementById('startFrom');
 const $totalFlowers = document.getElementById('totalFlowers');
 const $loopChk = document.getElementById('loopChk');
-const $lapsEach = document.getElementById('lapsEach');
+const $dwellEach = document.getElementById('dwellEach');
 const $dwellRow = document.getElementById('dwellRow');
+const $circleRadius = document.getElementById('circleRadius');
+const $radiusRow = document.getElementById('radiusRow');
+const $radiusVal = document.getElementById('radiusVal');
+$circleRadius.addEventListener('input', () => { $radiusVal.textContent = $circleRadius.value + ' m'; });
 const $modeRadios = document.querySelectorAll('input[name="cruiseMode"]');
 
 function getCruiseMode() {
@@ -557,11 +567,13 @@ const $speedRow = document.getElementById('speedRow');
 const $loopRow = document.querySelector('.loop-row');
 function syncModeUI() {
   const isPlant = getCruiseMode() === 'plant';
-  // dwell 欄位：plant 多朵才顯示
+  // 多朵種花才顯示「每朵停留秒數」
   $dwellRow.style.display = (isPlant && parsedFlowers.length >= 2) ? 'grid' : 'none';
-  // plant 鎖步行速度 → 隱藏速度滑桿
-  $speedRow.style.display = isPlant ? 'none' : 'flex';
-  // plant 仰賴循環拼花 → 強制開、隱藏 loop 開關
+  // 種花顯示圓半徑滑桿（單朵/多朵皆可調）
+  $radiusRow.style.display = isPlant ? 'flex' : 'none';
+  // 速度滑桿：種花也開放（可拉快，PB 種花上限 ~6km/h，超過可能不算）
+  $speedRow.style.display = 'flex';
+  // plant 仰賴循環 → 強制開、隱藏 loop 開關
   if (isPlant) { $loopChk.checked = true; }
   $loopRow.style.display = isPlant ? 'none' : 'flex';
 }
@@ -900,15 +912,17 @@ function handleMessage(m) {
 }
 
 $btnStart.addEventListener('click', () => {
-  const FIGURE = { circle_r_m: 70, tri_r_m: 95 };
-  // 原地單朵種花：無限畫整個圖（速度鎖步行）
+  const radius = parseInt($circleRadius.value) || 70;
+  const speed = parseInt($speed.value) || 5;
+  // 原地單朵種花：無限繞圓（半徑 radius、速度可調）
   if (isSingleFlowerPlant()) {
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
+      speed_kmh: speed,
       route: [parsedFlowers[0]],
       loop: true,
       mode: 'plant',
-      ...FIGURE,
+      dwell_radius_m: radius,
     }));
     return;
   }
@@ -917,14 +931,15 @@ $btnStart.addEventListener('click', () => {
   if (route.length < 2) return;
   const mode = getCruiseMode();
   if (mode === 'plant') {
-    // 多朵種花：每朵把整個圖畫完 laps_each 圈 → teleport 飛下一朵 → 無限循環。
+    // 多朵種花：飛到每朵 → 繞圓 dwell_each_s 秒 → 飛下一朵 → 無限循環。
     ws.send(JSON.stringify({
       type: 'start_loop_walk',
+      speed_kmh: speed,
       route,
       loop: true,
       mode: 'plant',
-      laps_each: parseInt($lapsEach.value) || 1,
-      ...FIGURE,
+      dwell_each_s: parseInt($dwellEach.value) || 60,
+      dwell_radius_m: radius,
     }));
     return;
   }
