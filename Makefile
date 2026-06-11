@@ -1,5 +1,5 @@
 .PHONY: install setup-sudo remove-sudo start stop restart status tunnel \
-        kill-tunnel clear logs help \
+        kill-tunnel clear clear-ipad clear-iphone clear-iphone2 logs help \
         start-ipad start-iphone start-iphone2 stop-ipad stop-iphone stop-iphone2 \
         restart-ipad restart-iphone restart-iphone2 mount-iphone-ddi mount-iphone2-ddi \
         status-all list-devices
@@ -14,12 +14,16 @@ IPHONE2_UDID ?=
 IPAD_PORT    ?= 7766
 IPHONE_PORT  ?= 7767
 IPHONE2_PORT ?= 7770
+# Real-world location — teleport here before clearing simulated GPS so iOS
+# picks up the correct timezone. Format: LAT,LON  (set in Makefile.local)
+HOME_POSITION ?=
 
 # Build "--udid <id>" only when the variable is non-empty, so the multi-device
 # targets fall back to auto-detect when no UDID is configured.
 IPAD_UDID_FLAG    := $(if $(IPAD_UDID),--udid $(IPAD_UDID))
 IPHONE_UDID_FLAG  := $(if $(IPHONE_UDID),--udid $(IPHONE_UDID))
 IPHONE2_UDID_FLAG := $(if $(IPHONE2_UDID),--udid $(IPHONE2_UDID))
+HOME_FLAG         := $(if $(HOME_POSITION),--home $(HOME_POSITION))
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -160,21 +164,24 @@ stop-iphone2: ## Stop iPhone-2 server only
 # stop-*. Necessary because graceful shutdown (broadcast + DVT close)
 # can take 3-5s — `sleep 1` is not enough and start-* would see the
 # port still bound and bail without starting a new server.
-restart-ipad: stop-ipad ## Restart iPad server
+restart-ipad: stop-ipad ## Restart iPad server (stop → clear GPS → start)
+	-@$(MAKE) clear-ipad
 	@for i in $$(seq 1 24); do \
 		lsof -iTCP:$(IPAD_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
 		sleep 0.5; \
 	done
 	@$(MAKE) start-ipad
 
-restart-iphone: stop-iphone ## Restart iPhone server
+restart-iphone: stop-iphone ## Restart iPhone server (stop → clear GPS → start)
+	-@$(MAKE) clear-iphone
 	@for i in $$(seq 1 24); do \
 		lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
 		sleep 0.5; \
 	done
 	@$(MAKE) start-iphone
 
-restart-iphone2: stop-iphone2 ## Restart iPhone-2 server
+restart-iphone2: stop-iphone2 ## Restart iPhone-2 server (stop → clear GPS → start)
+	-@$(MAKE) clear-iphone2
 	@for i in $$(seq 1 24); do \
 		lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
 		sleep 0.5; \
@@ -248,7 +255,16 @@ list-devices: ## List connected USB devices with UDIDs
 	@pymobiledevice3 usbmux list
 
 clear: ## Clear simulated location on first connected device
-	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py
+	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(HOME_FLAG)
+
+clear-ipad: tunnel ## Clear simulated location on iPad
+	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(IPAD_UDID_FLAG) $(HOME_FLAG)
+
+clear-iphone: tunnel ## Clear simulated location on iPhone
+	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(IPHONE_UDID_FLAG) $(HOME_FLAG)
+
+clear-iphone2: tunnel ## Clear simulated location on iPhone-2
+	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(IPHONE2_UDID_FLAG) $(HOME_FLAG)
 
 logs: ## Tail all logs
 	@tail -f /tmp/pikmin-server.log /tmp/pikmin-ipad.log /tmp/pikmin-iphone.log /tmp/pikmin-iphone2.log /tmp/pikmin-tunneld.log 2>/dev/null
