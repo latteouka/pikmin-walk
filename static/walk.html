@@ -566,8 +566,12 @@ function handleMessage(m) {
       }
       if (m.last_position) {
         updateDevice(m.last_position.lat, m.last_position.lon, true);
-        ws.send(JSON.stringify({ type: 'teleport', lat: m.last_position.lat, lon: m.last_position.lon }));
-        setStatus(`位置已同步 ${m.last_position.lat.toFixed(4)}, ${m.last_position.lon.toFixed(4)}`);
+        if (m.device) {
+          ws.send(JSON.stringify({ type: 'teleport', lat: m.last_position.lat, lon: m.last_position.lon }));
+          setStatus(`位置已同步 ${m.last_position.lat.toFixed(4)}, ${m.last_position.lon.toFixed(4)}`);
+        } else {
+          setStatus('書籤管理模式（無設備連線）');
+        }
       } else {
         setStatus('先在主控台瞬移到某處');
       }

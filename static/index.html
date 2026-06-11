@@ -755,7 +755,7 @@ const Modal = {
 //
 // ---- Map setup ----
 //
-const map = L.map('map', { zoomControl: true }).setView([25.0330, 121.5654], 13);
+const map = L.map('map', { zoomControl: true }).setView([25.075884, 121.359837], 15);
 
 // Tile layers
 const tileLayers = {
@@ -959,20 +959,19 @@ function handleMessage(m) {
   // events first. If it returns true the page-level switch is skipped.
   if (window.PikminAdmin && window.PikminAdmin.handle(m)) return;
   switch (m.type) {
-    case 'hello':
+    case 'hello': {
       setDevice(m.device);
-      if (m.last_position) {
-        updateDeviceMarker(m.last_position.lat, m.last_position.lon, { pan: true });
-        map.setView([m.last_position.lat, m.last_position.lon], 14);
-        // Auto re-push to phone so the app has a GPS fix immediately
-        ws.send(JSON.stringify({
-          type: 'teleport',
-          lat: m.last_position.lat,
-          lon: m.last_position.lon,
-        }));
-        setStatus(`位置已同步 ${m.last_position.lat.toFixed(5)}, ${m.last_position.lon.toFixed(5)}`);
+      const homeLat = 25.075884, homeLon = 121.359837;
+      updateDeviceMarker(homeLat, homeLon, { pan: true });
+      map.setView([homeLat, homeLon], 15);
+      if (m.device) {
+        ws.send(JSON.stringify({ type: 'teleport', lat: homeLat, lon: homeLon }));
+        setStatus(`位置已同步 Home ${homeLat.toFixed(5)}, ${homeLon.toFixed(5)}`);
+      } else {
+        setStatus('書籤管理模式（無設備連線）');
       }
       break;
+    }
     case 'teleported':
       updateDeviceMarker(m.lat, m.lon, { pan: true });
       setStatus(`✓ 瞬移到 ${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}`, 'done');
