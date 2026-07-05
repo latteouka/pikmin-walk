@@ -862,9 +862,11 @@ async function handleJumpInput() {
   const m = raw.match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
   if (m) {
     const lat = parseFloat(m[1]);
-    const lon = parseFloat(m[2]);
+    let lon = parseFloat(m[2]);
+    // Normalize longitude to [-180, 180] (e.g. 296.83 → -63.17)
+    lon = ((lon % 360) + 540) % 360 - 180;
     if (Number.isFinite(lat) && Number.isFinite(lon)
-        && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        && lat >= -90 && lat <= 90) {
       teleportTo(lat, lon);
       map.setView([lat, lon], 15);
       setStatus(`瞬移到 ${lat.toFixed(5)}, ${lon.toFixed(5)}`);
@@ -1252,6 +1254,7 @@ async function addBookmark() {
   const m = jumpInput.match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
   if (m) {
     lat = parseFloat(m[1]); lon = parseFloat(m[2]);
+    lon = ((lon % 360) + 540) % 360 - 180;
   } else {
     try {
       const url = 'https://nominatim.openstreetmap.org/search'
