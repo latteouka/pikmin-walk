@@ -1494,6 +1494,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "cleared"})
                     except Exception as e:
                         await websocket.send_json({"type": "error", "message": f"clear failed: {e}"})
+            elif action == "reset_timezone":
+                await _handle_reset_timezone(websocket)
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
@@ -2012,6 +2014,102 @@ async def _handle_stop(ws: WebSocket) -> None:
         await ws.send_json({"type": "stopped"})
     except Exception:
         pass
+
+
+async def _handle_reset_timezone(ws: WebSocket) -> None:
+    """Poke MCInstall + lockdown domains then poll until timezone changes.
+
+    WiFi-only iPads need their lockdown services "woken up" before the
+    timezone updates to match the simulated GPS position.  Connecting to
+    MobileConfigService and reading multiple lockdown domains does the trick.
+    """
+    if session.loc_sim is None:
+        await ws.send_json({"type": "error", "message": "未連線裝置"})
+        return
+
+    pos = session.last_position
+    if pos is None:
+        await ws.send_json({"type": "error", "message": "沒有目前位置，先瞬移到某處"})
+        return
+
+    MAX_POLLS = 36          # 36 × 5s = 3 minutes
+    POLL_INTERVAL = 5.0
+    _udid = TARGET_UDID if TARGET_UDID else None
+
+    try:
+        # Phase 1: poke MCInstall (profile service) + multiple domains
+        await ws.send_json({"type": "tz_progress", "step": "waking",
+                            "tz": "—", "offset_h": 0, "elapsed": 0})
+        try:
+            from pymobiledevice3.services.mobile_config import MobileConfigService
+            ld = await create_using_usbmux(serial=_udid)
+            mc = MobileConfigService(lockdown=ld)
+            await mc.get_profile_list()
+            await ld.close()
+        except Exception:
+            pass
+
+        for domain in ("com.apple.international", "com.apple.disk_usage",
+                        "com.apple.mobile.battery"):
+            try:
+                ld = await create_using_usbmux(serial=_udid)
+                await ld.get_value(domain=domain)
+                await ld.close()
+            except Exception:
+                pass
+
+        # Phase 2: poll timezone until it changes
+        initial_tz = None
+        tz = "?"
+        offset_h = 0
+        for i in range(MAX_POLLS):
+            try:
+                ld = await create_using_usbmux(serial=_udid)
+                tz = await ld.get_value(key="TimeZone")
+                offset = await ld.get_value(key="TimeZoneOffsetFromUTC")
+                await ld.close()
+            except Exception:
+                await asyncio.sleep(POLL_INTERVAL)
+                continue
+
+            if initial_tz is None:
+                initial_tz = tz
+
+            offset_h = offset / 3600 if offset else 0
+            elapsed = int(i * POLL_INTERVAL)
+
+            await ws.send_json({
+                "type": "tz_progress",
+                "step": "polling",
+                "tz": tz,
+                "offset_h": offset_h,
+                "elapsed": elapsed,
+            })
+
+            if tz != initial_tz:
+                await ws.send_json({
+                    "type": "tz_done",
+                    "tz": tz,
+                    "offset_h": offset_h,
+                    "elapsed": elapsed,
+                    "lat": pos[0],
+                    "lon": pos[1],
+                })
+                return
+
+            await asyncio.sleep(POLL_INTERVAL)
+
+        await ws.send_json({
+            "type": "tz_done",
+            "tz": tz,
+            "offset_h": offset_h,
+            "elapsed": int(MAX_POLLS * POLL_INTERVAL),
+            "timeout": True,
+            "lat": pos[0],
+            "lon": pos[1],
+        })
+    except Exception as e:
+        await ws.send_json({"type": "error", "message": f"重置時區失敗: {e}"})
 
 
 # --- Lifespan + app -------------------------------------------------------

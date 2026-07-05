@@ -722,6 +722,7 @@ const Modal = {
       </div>
       <div class="btn-row">
         <button id="clearLoc">回到真實 GPS</button>
+        <button id="resetTz">重置時區</button>
       </div>
     </div>
 
@@ -1007,10 +1008,32 @@ function handleMessage(m) {
       setStatus('已回到真實 GPS', 'done');
       resetTrail();
       break;
+    case 'tz_progress': {
+      if (m.step === 'waking') {
+        setStatus('時區重置：喚醒 iOS 服務…');
+      } else {
+        const oh = m.offset_h != null ? `UTC${m.offset_h >= 0 ? '+' : ''}${m.offset_h}` : '';
+        setStatus(`時區偵測中 [${m.elapsed}s]：${m.tz} (${oh})`);
+      }
+      break;
+    }
+    case 'tz_done': {
+      const tzBtn = document.getElementById('resetTz');
+      tzBtn.disabled = false;
+      tzBtn.textContent = '重置時區';
+      const oh = m.offset_h != null ? `UTC${m.offset_h >= 0 ? '+' : ''}${m.offset_h}` : '';
+      if (m.timeout) {
+        setStatus(`⚠ 3 分鐘未變化，目前 ${m.tz} (${oh})`, 'error');
+      } else {
+        setStatus(`✓ 時區已更新：${m.tz} (${oh})，耗時 ${m.elapsed}s`, 'done');
+      }
+      break;
+    }
     case 'error':
       setStatus(`error: ${m.message}`, 'error');
       $start.disabled = false;
       $stop.disabled = true;
+      { const tz = document.getElementById('resetTz'); tz.disabled = false; tz.textContent = '重置時區'; }
       break;
   }
 }
@@ -1038,6 +1061,12 @@ $start.addEventListener('click', () => {
 $stop.addEventListener('click', () => ws.send(JSON.stringify({ type: 'stop' })));
 document.getElementById('clearLoc').addEventListener('click', () => {
   ws.send(JSON.stringify({ type: 'clear' }));
+});
+const $resetTz = document.getElementById('resetTz');
+$resetTz.addEventListener('click', () => {
+  $resetTz.disabled = true;
+  $resetTz.textContent = '重置中…';
+  ws.send(JSON.stringify({ type: 'reset_timezone' }));
 });
 document.getElementById('jumpButton').addEventListener('click', handleJumpInput);
 document.getElementById('jumpInput').addEventListener('keydown', (e) => {
