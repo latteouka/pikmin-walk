@@ -722,7 +722,7 @@ const Modal = {
       </div>
       <div class="btn-row">
         <button id="clearLoc">回到真實 GPS</button>
-        <button id="resetTz">重置時區</button>
+        <button id="resetTz">設定時區</button>
       </div>
     </div>
 
@@ -1011,31 +1011,34 @@ function handleMessage(m) {
       resetTrail();
       break;
     case 'tz_progress': {
-      if (m.step === 'waking') {
-        setStatus('時區重置：喚醒 iOS 服務…');
-      } else {
-        const oh = m.offset_h != null ? `UTC${m.offset_h >= 0 ? '+' : ''}${m.offset_h}` : '';
-        setStatus(`時區偵測中 [${m.elapsed}s]：${m.tz} (${oh})`);
-      }
+      setStatus(`設定時區：${m.target_tz}…（iPadOS 最多可能需要 90 秒）`);
       break;
     }
     case 'tz_done': {
       const tzBtn = document.getElementById('resetTz');
       tzBtn.disabled = false;
-      tzBtn.textContent = '重置時區';
+      tzBtn.textContent = '設定時區';
       const oh = m.offset_h != null ? `UTC${m.offset_h >= 0 ? '+' : ''}${m.offset_h}` : '';
-      if (m.timeout) {
-        setStatus(`⚠ 3 分鐘未變化，目前 ${m.tz} (${oh})`, 'error');
+      if (m.from_tz && m.from_tz !== m.tz) {
+        setStatus(`✓ 時區 ${m.from_tz} → ${m.tz} (${oh})`, 'done');
       } else {
-        setStatus(`✓ 時區已更新：${m.tz} (${oh})，耗時 ${m.elapsed}s`, 'done');
+        setStatus(`✓ 時區已是 ${m.tz} (${oh})`, 'done');
       }
+      break;
+    }
+    case 'tz_failed': {
+      const tzBtn = document.getElementById('resetTz');
+      tzBtn.disabled = false;
+      tzBtn.textContent = '設定時區';
+      const oh = m.offset_h != null ? `UTC${m.offset_h >= 0 ? '+' : ''}${m.offset_h}` : '未知 offset';
+      setStatus(`⚠ ${m.message}\n目前仍是 ${m.tz} (${oh})`, 'error');
       break;
     }
     case 'error':
       setStatus(`error: ${m.message}`, 'error');
       $start.disabled = false;
       $stop.disabled = true;
-      { const tz = document.getElementById('resetTz'); tz.disabled = false; tz.textContent = '重置時區'; }
+      { const tz = document.getElementById('resetTz'); tz.disabled = false; tz.textContent = '設定時區'; }
       break;
   }
 }
@@ -1067,7 +1070,7 @@ document.getElementById('clearLoc').addEventListener('click', () => {
 const $resetTz = document.getElementById('resetTz');
 $resetTz.addEventListener('click', () => {
   $resetTz.disabled = true;
-  $resetTz.textContent = '重置中…';
+  $resetTz.textContent = '設定中…';
   ws.send(JSON.stringify({ type: 'reset_timezone' }));
 });
 document.getElementById('jumpButton').addEventListener('click', handleJumpInput);
