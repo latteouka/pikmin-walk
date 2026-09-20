@@ -6,6 +6,7 @@
 #     "starlette>=1.0",
 #     "uvicorn>=0.44",
 #     "httpx>=0.28",
+#     "timezonefinder>=6.0",
 # ]
 # ///
 """
@@ -34,6 +35,7 @@ import subprocess
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import math
@@ -2017,11 +2019,11 @@ async def _handle_stop(ws: WebSocket) -> None:
 
 
 async def _handle_reset_timezone(ws: WebSocket) -> None:
-    """Poke MCInstall + lockdown domains then poll until timezone changes.
+    """Try to set the timezone for the current simulated GPS position.
 
-    WiFi-only iPads need their lockdown services "woken up" before the
-    timezone updates to match the simulated GPS position.  Connecting to
-    MobileConfigService and reading multiple lockdown domains does the trick.
+    Recent iPadOS versions can acknowledge lockdownd ``SetValue`` while
+    silently keeping the old timezone.  Treat the write as successful only
+    after both TimeZone and TimeZoneOffsetFromUTC match fresh reads.
     """
     if session.loc_sim is None:
         await ws.send_json({"type": "error", "message": "未連線裝置"})
@@ -2032,84 +2034,163 @@ async def _handle_reset_timezone(ws: WebSocket) -> None:
         await ws.send_json({"type": "error", "message": "沒有目前位置，先瞬移到某處"})
         return
 
-    MAX_POLLS = 36          # 36 × 5s = 3 minutes
-    POLL_INTERVAL = 5.0
-    _udid = TARGET_UDID if TARGET_UDID else None
+    lat, lon = pos
 
+    from timezonefinder import TimezoneFinder
+    tf = TimezoneFinder()
+    target_tz = tf.timezone_at(lat=lat, lng=lon)
+    if target_tz is None:
+        await ws.send_json({"type": "error", "message": f"無法從座標 ({lat:.4f}, {lon:.4f}) 判斷時區"})
+        return
+
+    await ws.send_json({"type": "tz_progress", "step": "setting",
+                        "target_tz": target_tz, "lat": lat, "lon": lon})
+
+    expected_offset = _timezone_offset_seconds(target_tz)
+    initial_tz = None
+    actual_tz = None
+    actual_offset = None
+    errors: list[str] = []
+
+    # Try the iOS 17+ remote-lockdown path first.
+    rsds = []
     try:
-        # Phase 1: poke MCInstall (profile service) + multiple domains
-        await ws.send_json({"type": "tz_progress", "step": "waking",
-                            "tz": "—", "offset_h": 0, "elapsed": 0})
-        try:
-            from pymobiledevice3.services.mobile_config import MobileConfigService
-            ld = await create_using_usbmux(serial=_udid)
-            mc = MobileConfigService(lockdown=ld)
-            await mc.get_profile_list()
-            await ld.close()
-        except Exception:
-            pass
-
-        for domain in ("com.apple.international", "com.apple.disk_usage",
-                        "com.apple.mobile.battery"):
+        rsds = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
+        candidates = [r for r in rsds if not TARGET_UDID or r.udid == TARGET_UDID]
+        if candidates:
+            initial_tz, actual_tz, actual_offset = await _set_and_verify_timezone(
+                candidates[0], target_tz, expected_offset, verify_delays=(0.0, 1.0, 3.0),
+            )
+            if _timezone_applied(target_tz, expected_offset, actual_tz, actual_offset):
+                await _send_timezone_done(
+                    ws, initial_tz, actual_tz, actual_offset, target_tz, lat, lon,
+                )
+                return
+    except Exception as e:
+        errors.append(f"DVT: {e}")
+        print(f"  tz: DVT path failed: {e}")
+    finally:
+        for rsd in rsds:
             try:
-                ld = await create_using_usbmux(serial=_udid)
-                await ld.get_value(domain=domain)
+                await rsd.close()
+            except Exception:
+                pass
+
+    # Retry through the direct usbmux lockdown connection.  This is a real
+    # second transport, not proof of success by itself; verification below is
+    # still mandatory because iPadOS may echo SetValue without applying it.
+    ld = None
+    try:
+        ld = await create_using_usbmux(serial=TARGET_UDID or None)
+        usb_initial, actual_tz, actual_offset = await _set_and_verify_timezone(
+            ld, target_tz, expected_offset,
+        )
+        if initial_tz is None:
+            initial_tz = usb_initial
+        if _timezone_applied(target_tz, expected_offset, actual_tz, actual_offset):
+            await _send_timezone_done(
+                ws, initial_tz, actual_tz, actual_offset, target_tz, lat, lon,
+            )
+            return
+    except Exception as e:
+        errors.append(f"USB: {e}")
+        print(f"  tz: USB path failed: {e}")
+    finally:
+        if ld is not None:
+            try:
                 await ld.close()
             except Exception:
                 pass
 
-        # Phase 2: poll timezone until it changes
-        initial_tz = None
-        tz = "?"
-        offset_h = 0
-        for i in range(MAX_POLLS):
-            try:
-                ld = await create_using_usbmux(serial=_udid)
-                tz = await ld.get_value(key="TimeZone")
-                offset = await ld.get_value(key="TimeZoneOffsetFromUTC")
-                await ld.close()
-            except Exception:
-                await asyncio.sleep(POLL_INTERVAL)
-                continue
+    if actual_tz is None:
+        detail = "; ".join(errors) or "無法讀取裝置時區"
+        await ws.send_json({"type": "error", "message": f"設定時區失敗: {detail}"})
+        return
 
-            if initial_tz is None:
-                initial_tz = tz
+    await ws.send_json({
+        "type": "tz_failed",
+        "tz": actual_tz,
+        "target_tz": target_tz,
+        "offset_h": actual_offset / 3600 if actual_offset is not None else None,
+        "lat": lat,
+        "lon": lon,
+        "message": (
+            "iPadOS 已接收設定要求但未套用。請在 iPad 的「設定 → 一般 → 日期與時間」"
+            f"關閉「自動設定時區」，再將時區城市設為 {target_tz}。"
+        ),
+    })
 
-            offset_h = offset / 3600 if offset else 0
-            elapsed = int(i * POLL_INTERVAL)
 
-            await ws.send_json({
-                "type": "tz_progress",
-                "step": "polling",
-                "tz": tz,
-                "offset_h": offset_h,
-                "elapsed": elapsed,
-            })
+def _timezone_offset_seconds(timezone_name: str) -> float:
+    offset = datetime.now(timezone.utc).astimezone(ZoneInfo(timezone_name)).utcoffset()
+    return offset.total_seconds() if offset is not None else 0.0
 
-            if tz != initial_tz:
-                await ws.send_json({
-                    "type": "tz_done",
-                    "tz": tz,
-                    "offset_h": offset_h,
-                    "elapsed": elapsed,
-                    "lat": pos[0],
-                    "lon": pos[1],
-                })
-                return
 
-            await asyncio.sleep(POLL_INTERVAL)
+def _timezone_applied(
+    target_tz: str,
+    expected_offset: float,
+    actual_tz: object,
+    actual_offset: object,
+) -> bool:
+    try:
+        return actual_tz == target_tz and float(actual_offset) == expected_offset
+    except (TypeError, ValueError):
+        return False
 
-        await ws.send_json({
-            "type": "tz_done",
-            "tz": tz,
-            "offset_h": offset_h,
-            "elapsed": int(MAX_POLLS * POLL_INTERVAL),
-            "timeout": True,
-            "lat": pos[0],
-            "lon": pos[1],
-        })
-    except Exception as e:
-        await ws.send_json({"type": "error", "message": f"重置時區失敗: {e}"})
+
+async def _read_device_timezone(lockdown) -> tuple[object, object]:
+    return (
+        await lockdown.get_value(key="TimeZone"),
+        await lockdown.get_value(key="TimeZoneOffsetFromUTC"),
+    )
+
+
+async def _set_and_verify_timezone(
+    lockdown,
+    target_tz: str,
+    expected_offset: float,
+    verify_delays: tuple[float, ...] = (
+        0.0, 2.0, 3.0, 5.0, 5.0, 5.0,
+        10.0, 10.0, 10.0, 10.0, 15.0, 15.0,
+    ),
+) -> tuple[object, object, object]:
+    initial_tz, _ = await _read_device_timezone(lockdown)
+    actual_tz, actual_offset = await _read_device_timezone(lockdown)
+    if _timezone_applied(target_tz, expected_offset, actual_tz, actual_offset):
+        return initial_tz, actual_tz, actual_offset
+
+    await lockdown.set_timezone(target_tz)
+    # iPadOS 26 has been observed acknowledging SetValue immediately but
+    # applying TimeZone tens of seconds later.  The USB attempt therefore
+    # receives a 90-second verification window; callers may use a shorter
+    # window for a transport fallback.
+    for delay in verify_delays:
+        if delay:
+            await asyncio.sleep(delay)
+        actual_tz, actual_offset = await _read_device_timezone(lockdown)
+        if _timezone_applied(target_tz, expected_offset, actual_tz, actual_offset):
+            break
+    return initial_tz, actual_tz, actual_offset
+
+
+async def _send_timezone_done(
+    ws: WebSocket,
+    initial_tz: object,
+    actual_tz: object,
+    actual_offset: object,
+    target_tz: str,
+    lat: float,
+    lon: float,
+) -> None:
+    await ws.send_json({
+        "type": "tz_done",
+        "from_tz": initial_tz,
+        "tz": actual_tz,
+        "target_tz": target_tz,
+        "offset_h": float(actual_offset) / 3600,
+        "lat": lat,
+        "lon": lon,
+    })
 
 
 # --- Lifespan + app -------------------------------------------------------
