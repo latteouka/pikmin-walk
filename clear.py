@@ -18,19 +18,24 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.simulate_location import DtSimulateLocation
 
 
+DVT_TIMEOUT_S = 30
+
+
 async def _clear_via_dvt(udid: str | None, home: tuple[float, float] | None) -> bool:
     """Try iOS 17+ DVT tunnel path. Returns True on success."""
     try:
-        from pymobiledevice3.tunneld import get_tunneld_devices, TUNNELD_DEFAULT_ADDRESS
-        from pymobiledevice3.dvt.instruments.location_simulation import LocationSimulation
-        from pymobiledevice3.dvt.dvt_provider import DvtProvider
+        from pymobiledevice3.tunneld.api import get_tunneld_devices, TUNNELD_DEFAULT_ADDRESS
+        from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
+        from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
         from contextlib import AsyncExitStack
-    except ImportError:
+    except ImportError as e:
+        print(f"DVT path unavailable: {e}")
         return False
 
     try:
         rsds = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
-    except Exception:
+    except Exception as e:
+        print(f"tunneld query failed: {e}")
         return False
 
     if not rsds:
@@ -121,8 +126,14 @@ async def main() -> None:
                         help="Teleport here before clearing (LAT,LON) — fixes timezone stuck issue")
     args = parser.parse_args()
 
-    if await _clear_via_dvt(args.udid, args.home):
-        return
+    # A tunnel that died (e.g. USB unplugged) can stay listed in tunneld for
+    # minutes; connecting to it hangs forever. Bound the DVT attempt so
+    # `make restart-*` never stalls here.
+    try:
+        if await asyncio.wait_for(_clear_via_dvt(args.udid, args.home), DVT_TIMEOUT_S):
+            return
+    except asyncio.TimeoutError:
+        print(f"DVT clear timed out after {DVT_TIMEOUT_S}s (stale tunnel?)")
     if await _clear_via_legacy(args.udid, args.home):
         return
     print("✗ no reachable device — is tunneld running? is the device connected?")

@@ -105,11 +105,13 @@ start-ipad: tunnel ## Start iPad server on port 7766
 		echo "✗ failed after 15s — cat /tmp/pikmin-ipad.log"; \
 	fi
 
-mount-iphone-ddi: ## Mount DeveloperDiskImage on iPhone (needed after reboot)
+mount-iphone-ddi: tunnel ## Mount DeveloperDiskImage on iPhone (needed after reboot)
 	@if [ -z "$(IPHONE_UDID)" ]; then \
 		echo "✗ IPHONE_UDID not set — add it to Makefile.local"; exit 1; \
 	fi
-	@uv run --quiet --with pymobiledevice3 python scripts/mount_ddi.py $(IPHONE_UDID) 2>&1 | tail -1
+	@# iOS 17+ needs the personalized DDI, mounted over the tunneld tunnel
+	@# (USB or Wi-Fi). "already mounted" is reported as an error — ignore it.
+	@$(PMD) mounter auto-mount --tunnel $(IPHONE_UDID) 2>&1 | grep -oE 'mounted successfully|already mounted|[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /' || true
 
 start-iphone: mount-iphone-ddi ## Start iPhone server on port 7767 (auto-mounts DDI)
 	@if lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
@@ -128,11 +130,13 @@ start-iphone: mount-iphone-ddi ## Start iPhone server on port 7767 (auto-mounts 
 		echo "✗ failed after 15s — cat /tmp/pikmin-iphone.log"; \
 	fi
 
-mount-iphone2-ddi: ## Mount DDI on iPhone 2 (needed after reboot)
+mount-iphone2-ddi: tunnel ## Mount DDI on iPhone 2 (needed after reboot)
 	@if [ -z "$(IPHONE2_UDID)" ]; then \
 		echo "✗ IPHONE2_UDID not set — add it to Makefile.local"; exit 1; \
 	fi
-	@uv run --quiet --with pymobiledevice3 python scripts/mount_ddi.py $(IPHONE2_UDID) 2>&1 | tail -1
+	@# iOS 17+ needs the personalized DDI, mounted over the tunneld tunnel
+	@# (USB or Wi-Fi). "already mounted" is reported as an error — ignore it.
+	@$(PMD) mounter auto-mount --tunnel $(IPHONE2_UDID) 2>&1 | grep -oE 'mounted successfully|already mounted|[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /' || true
 
 start-iphone2: mount-iphone2-ddi ## Start iPhone-2 server on port 7770 (auto-mounts DDI)
 	@if lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
