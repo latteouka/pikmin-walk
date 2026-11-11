@@ -708,11 +708,11 @@ function redrawForStart() {
   $btnStart.disabled = slice.length < 2;
 }
 
-let orbitCircle = null;  // 70m 繞圈示意圈（單朵原地繞花）
+let orbitCircle = null;  // 25m 繞圈示意圈（單朵原地繞花，對齊 PLANT.dwell_radius_m）
 function showOrbitCircle(flower) {
   clearOrbitCircle();
   orbitCircle = L.circle(flower, {
-    radius: 70, color: '#ec4899', weight: 2,
+    radius: 25, color: '#ec4899', weight: 2,
     fillColor: '#ec4899', fillOpacity: 0.12, dashArray: '4, 4',
   }).addTo(map);
 }
@@ -728,7 +728,7 @@ function applySingleFlowerPlant() {
   if (isSingleFlowerPlant()) {
     showOrbitCircle(parsedFlowers[0]);
     $btnStart.disabled = false;
-    $preview.textContent = '🔁 原地繞花 · 70m 圈 · ~4.5 km/h 步行 — 按「開始」無限繞圈';
+    $preview.textContent = '🔁 原地繞花 · 25m 圈 · ~14 km/h — 按「開始」無限繞圈';
     $preview.className = 'preview-info';
   } else {
     // 1 朵但模式是採花 / 快速採花
