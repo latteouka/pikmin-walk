@@ -111,7 +111,10 @@ mount-iphone-ddi: tunnel ## Mount DeveloperDiskImage on iPhone (needed after reb
 	fi
 	@# iOS 17+ needs the personalized DDI, mounted over the tunneld tunnel
 	@# (USB or Wi-Fi). "already mounted" is reported as an error — ignore it.
-	@$(PMD) mounter auto-mount --tunnel $(IPHONE_UDID) 2>&1 | grep -oE 'mounted successfully|already mounted|[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /' || true
+	@out=$$($(PMD) mounter auto-mount --tunnel $(IPHONE_UDID) 2>&1); \
+	if echo "$$out" | grep -q 'already mounted'; then echo '  DDI: already mounted'; \
+	elif echo "$$out" | grep -q 'mounted successfully'; then echo '  DDI: mounted successfully'; \
+	else echo "$$out" | grep -oE '[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /'; fi; true
 
 start-iphone: mount-iphone-ddi ## Start iPhone server on port 7767 (auto-mounts DDI)
 	@if lsof -iTCP:$(IPHONE_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
@@ -136,7 +139,10 @@ mount-iphone2-ddi: tunnel ## Mount DDI on iPhone 2 (needed after reboot)
 	fi
 	@# iOS 17+ needs the personalized DDI, mounted over the tunneld tunnel
 	@# (USB or Wi-Fi). "already mounted" is reported as an error — ignore it.
-	@$(PMD) mounter auto-mount --tunnel $(IPHONE2_UDID) 2>&1 | grep -oE 'mounted successfully|already mounted|[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /' || true
+	@out=$$($(PMD) mounter auto-mount --tunnel $(IPHONE2_UDID) 2>&1); \
+	if echo "$$out" | grep -q 'already mounted'; then echo '  DDI: already mounted'; \
+	elif echo "$$out" | grep -q 'mounted successfully'; then echo '  DDI: mounted successfully'; \
+	else echo "$$out" | grep -oE '[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /'; fi; true
 
 start-iphone2: mount-iphone2-ddi ## Start iPhone-2 server on port 7770 (auto-mounts DDI)
 	@if lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
