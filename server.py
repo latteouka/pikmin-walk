@@ -620,21 +620,27 @@ class DeviceSession:
         """
         if not TARGET_UDID:
             return False
-        try:
-            host, port = TUNNELD_DEFAULT_ADDRESS
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(
-                    f"http://{host}:{port}/start-tunnel",
-                    params={"udid": TARGET_UDID, "connection_type": "wifi"},
-                )
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            if data.get("interface") or data.get("address") or data.get("tunnel-port"):
-                print(f"  ↳ tunneld brought up Wi-Fi tunnel for {TARGET_UDID} (Bonjour-resolved)")
-                return True
-        except Exception as e:
-            print(f"  ↳ tunneld /start-tunnel failed: {e}")
+        # 3. **Retry.** The device advertises on several addresses (Wi-Fi
+        #    IPv6, hotspot 172.20.10.1, ...); tunneld 9.9.x starts one tunnel
+        #    per address and answers 404 if the first to finish failed, even
+        #    when another would have succeeded. It is intermittent.
+        host, port = TUNNELD_DEFAULT_ADDRESS
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(
+                        f"http://{host}:{port}/start-tunnel",
+                        params={"udid": TARGET_UDID, "connection_type": "wifi"},
+                    )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("interface") or data.get("address") or data.get("tunnel-port"):
+                        print(f"  ↳ tunneld brought up Wi-Fi tunnel for {TARGET_UDID} (Bonjour-resolved)")
+                        return True
+                print(f"  ↳ tunneld /start-tunnel → {resp.status_code} (try {attempt + 1}/4)")
+            except Exception as e:
+                print(f"  ↳ tunneld /start-tunnel failed: {e} (try {attempt + 1}/4)")
+            await asyncio.sleep(1)
         return False
 
     async def connect(self) -> None:
@@ -650,7 +656,13 @@ class DeviceSession:
         # tunneld is empty (USB just unplugged, or never had a tunnel). If we
         # remember a Wi-Fi address for our target device, ask tunneld to bring
         # one up before we give up on the DVT path.
-        if not rsds:
+        # Multi-device: other devices' tunnels may be listed while ours is
+        # missing, so "empty" means "nothing for TARGET_UDID".
+        has_target = any(r.udid == TARGET_UDID for r in rsds) if TARGET_UDID else bool(rsds)
+        if not has_target:
+            for r in rsds:
+                await r.close()
+            rsds = []
             if await self._request_tunneld_wifi_tunnel():
                 # Query IMMEDIATELY — do NOT sleep here. /start-tunnel returns
                 # 200 only *after* the tunnel is registered, so the device is

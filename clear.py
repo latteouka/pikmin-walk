@@ -18,65 +18,136 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.simulate_location import DtSimulateLocation
 
 
-DVT_TIMEOUT_S = 30
+DVT_ATTEMPT_TIMEOUT_S = 20
+DVT_TIMEOUT_S = 150
+WIFI_TUNNEL_TRIES = 4
 
 
-async def _clear_via_dvt(udid: str | None, home: tuple[float, float] | None) -> bool:
-    """Try iOS 17+ DVT tunnel path. Returns True on success."""
+def _tunneld_get(path: str, params: dict, timeout: float) -> int:
+    """GET a tunneld control endpoint; returns HTTP status (0 on error)."""
+    import urllib.parse
+    import urllib.request
+    from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS
+
+    host, port = TUNNELD_DEFAULT_ADDRESS
+    url = f"http://{host}:{port}{path}?{urllib.parse.urlencode(params)}"
     try:
-        from pymobiledevice3.tunneld.api import get_tunneld_devices, TUNNELD_DEFAULT_ADDRESS
-        from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
-        from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
-        from contextlib import AsyncExitStack
-    except ImportError as e:
-        print(f"DVT path unavailable: {e}")
-        return False
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.status
+    except Exception:
+        return 0
+
+
+async def _request_wifi_tunnel(udid: str) -> bool:
+    """Ask tunneld to bring up a Wi-Fi tunnel (Bonjour-resolved, no cached IP).
+
+    Same contract as server.py's _request_tunneld_wifi_tunnel: pin
+    connection_type=wifi, never pass ip.
+
+    The device advertises on several addresses (Wi-Fi IPv6, hotspot
+    172.20.10.1, ...); tunneld 9.9.x races one tunnel per address and
+    returns 404 if the first to finish failed. Intermittent → retry.
+    """
+    for attempt in range(WIFI_TUNNEL_TRIES):
+        status = await asyncio.to_thread(
+            _tunneld_get, "/start-tunnel", {"udid": udid, "connection_type": "wifi"}, 30.0
+        )
+        if status == 200:
+            return True
+        print(f"  ↳ tunneld /start-tunnel → {status or 'error'} (try {attempt + 1}/{WIFI_TUNNEL_TRIES})")
+        await asyncio.sleep(1)
+    return False
+
+
+async def _cancel_tunnel(udid: str) -> None:
+    await asyncio.to_thread(_tunneld_get, "/cancel", {"udid": udid}, 5.0)
+
+
+async def _pick_rsd(udid: str | None):
+    """Return the tunneld rsd for udid (or the first one), closing the rest."""
+    from pymobiledevice3.tunneld.api import get_tunneld_devices, TUNNELD_DEFAULT_ADDRESS
 
     try:
         rsds = await get_tunneld_devices(TUNNELD_DEFAULT_ADDRESS)
     except Exception as e:
         print(f"tunneld query failed: {e}")
-        return False
+        return None
+    chosen = None
+    for r in rsds:
+        if chosen is None and (udid is None or r.udid == udid):
+            chosen = r
+        else:
+            await r.close()
+    return chosen
 
-    if not rsds:
-        return False
 
-    if udid:
-        matching = [r for r in rsds if r.udid == udid]
-        for r in rsds:
-            if r.udid != udid:
-                await r.close()
-        rsds = matching
-
-    if not rsds:
-        return False
-
-    rsd = rsds[0]
-    for extra in rsds[1:]:
-        await extra.close()
-
-    ios_major = int(rsd.product_version.split(".")[0])
-    if ios_major < 17:
-        await rsd.close()
-        return False
+async def _clear_on_rsd(rsd, home: tuple[float, float] | None) -> bool:
+    from contextlib import AsyncExitStack
+    from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+    from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 
     async with AsyncExitStack() as stack:
-        try:
-            dvt = await stack.enter_async_context(DvtProvider(rsd))
-            loc_sim = await stack.enter_async_context(LocationSimulation(dvt))
-            print(f"device: {rsd.product_type} / iOS {rsd.product_version} (DVT)")
+        dvt = await stack.enter_async_context(DvtProvider(rsd))
+        loc_sim = await stack.enter_async_context(LocationSimulation(dvt))
+        print(f"device: {rsd.product_type} / iOS {rsd.product_version} (DVT)")
 
-            if home:
-                print(f"↳ teleporting to home ({home[0]:.4f}, {home[1]:.4f}) to reset timezone...")
-                await loc_sim.set(home[0], home[1])
-                await asyncio.sleep(5)
+        if home:
+            print(f"↳ teleporting to home ({home[0]:.4f}, {home[1]:.4f}) to reset timezone...")
+            await loc_sim.set(home[0], home[1])
+            await asyncio.sleep(5)
 
-            await loc_sim.clear()
-            print("✓ cleared — device is back on real GPS")
-            return True
-        except Exception as e:
-            print(f"DVT clear failed: {e}")
+        await loc_sim.clear()
+        print("✓ cleared — device is back on real GPS")
+        return True
+
+
+async def _clear_via_dvt(udid: str | None, home: tuple[float, float] | None) -> bool:
+    """Try iOS 17+ DVT tunnel path. Returns True on success.
+
+    With a udid, two recoveries make Wi-Fi reliable:
+      - no tunnel listed for the device (USB just unplugged, tunneld idle)
+        → ask tunneld for a Wi-Fi tunnel and use it immediately (it
+        idle-closes in ~1-2s if unconsumed, so no sleep in between);
+      - a listed tunnel that hangs or fails (stale after unplug / network
+        change) → cancel it, request a fresh Wi-Fi tunnel, retry once.
+    """
+    try:
+        import pymobiledevice3.services.dvt.instruments.location_simulation  # noqa: F401
+    except ImportError as e:
+        print(f"DVT path unavailable: {e}")
+        return False
+
+    for attempt in range(2):
+        rsd = await _pick_rsd(udid)
+        if rsd is None and udid:
+            print("↳ no tunnel for device — requesting Wi-Fi tunnel from tunneld...")
+            if await _request_wifi_tunnel(udid):
+                rsd = await _pick_rsd(udid)
+        if rsd is None:
             return False
+
+        if int(rsd.product_version.split(".")[0]) < 17:
+            await rsd.close()
+            return False
+
+        try:
+            return await asyncio.wait_for(_clear_on_rsd(rsd, home), DVT_ATTEMPT_TIMEOUT_S)
+        except Exception as e:
+            reason = "timed out" if isinstance(e, asyncio.TimeoutError) else f"failed: {e}"
+            print(f"DVT clear {reason} (stale tunnel?)")
+        finally:
+            try:
+                await rsd.close()
+            except Exception:
+                pass
+
+        if not udid or attempt:
+            return False
+        print("↳ cancelling stale tunnel and retrying over Wi-Fi...")
+        await _cancel_tunnel(udid)
+        if not await _request_wifi_tunnel(udid):
+            return False
+    return False
 
 
 async def _clear_via_legacy(udid: str | None, home: tuple[float, float] | None) -> bool:
