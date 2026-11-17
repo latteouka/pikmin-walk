@@ -1,6 +1,7 @@
 .PHONY: install setup-sudo remove-sudo start stop restart status tunnel \
-        kill-tunnel clear clear-ipad clear-iphone clear-iphone2 logs help \
+        kill-tunnel clear clear-ipad clear-iphone clear-iphone2 clear-iphone3 logs help \
         start-ipad start-iphone start-iphone2 stop-ipad stop-iphone stop-iphone2 \
+        start-iphone3 stop-iphone3 restart-iphone3 mount-iphone3-ddi \
         restart-ipad restart-iphone restart-iphone2 mount-iphone-ddi mount-iphone2-ddi \
         status-all list-devices
 
@@ -11,9 +12,11 @@
 IPAD_UDID    ?=
 IPHONE_UDID  ?=
 IPHONE2_UDID ?=
+IPHONE3_UDID ?=
 IPAD_PORT    ?= 7766
 IPHONE_PORT  ?= 7767
 IPHONE2_PORT ?= 7770
+IPHONE3_PORT ?= 7771
 # Real-world location — teleport here before clearing simulated GPS so iOS
 # picks up the correct timezone. Format: LAT,LON  (set in Makefile.local)
 HOME_POSITION ?=
@@ -23,6 +26,7 @@ HOME_POSITION ?=
 IPAD_UDID_FLAG    := $(if $(IPAD_UDID),--udid $(IPAD_UDID))
 IPHONE_UDID_FLAG  := $(if $(IPHONE_UDID),--udid $(IPHONE_UDID))
 IPHONE2_UDID_FLAG := $(if $(IPHONE2_UDID),--udid $(IPHONE2_UDID))
+IPHONE3_UDID_FLAG := $(if $(IPHONE3_UDID),--udid $(IPHONE3_UDID))
 HOME_FLAG         := $(if $(HOME_POSITION),--home $(HOME_POSITION))
 
 help: ## Show this help
@@ -78,6 +82,7 @@ stop: ## Stop all pikmin servers (by port)
 	$(call KILL_PORT,$(IPAD_PORT))
 	$(call KILL_PORT,$(IPHONE_PORT))
 	$(call KILL_PORT,$(IPHONE2_PORT))
+	$(call KILL_PORT,$(IPHONE3_PORT))
 
 restart: stop ## Restart default server
 	@for i in $$(seq 1 24); do \
@@ -161,6 +166,34 @@ start-iphone2: mount-iphone2-ddi ## Start iPhone-2 server on port 7770 (auto-mou
 		echo "✗ failed after 15s — cat /tmp/pikmin-iphone2.log"; \
 	fi
 
+mount-iphone3-ddi: tunnel ## Mount DDI on iPhone 3 (needed after reboot)
+	@if [ -z "$(IPHONE3_UDID)" ]; then \
+		echo "✗ IPHONE3_UDID not set — add it to Makefile.local"; exit 1; \
+	fi
+	@# iOS 17+ needs the personalized DDI, mounted over the tunneld tunnel
+	@# (USB or Wi-Fi). "already mounted" is reported as an error — ignore it.
+	@out=$$($(PMD) mounter auto-mount --tunnel $(IPHONE3_UDID) 2>&1); \
+	if echo "$$out" | grep -q 'already mounted'; then echo '  DDI: already mounted'; \
+	elif echo "$$out" | grep -q 'mounted successfully'; then echo '  DDI: mounted successfully'; \
+	else echo "$$out" | grep -oE '[A-Za-z]*Error.*' | tail -1 | sed 's/^/  DDI: /'; fi; true
+
+start-iphone3: mount-iphone3-ddi ## Start iPhone-3 server on port 7771 (auto-mounts DDI)
+	@if lsof -iTCP:$(IPHONE3_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+		echo "iPhone-3 server already running on :$(IPHONE3_PORT)"; \
+	else \
+		cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && \
+		nohup uv run server.py --port $(IPHONE3_PORT) $(IPHONE3_UDID_FLAG) \
+			> /tmp/pikmin-iphone3.log 2>&1 & \
+		for i in $$(seq 1 15); do \
+			sleep 1; \
+			if lsof -iTCP:$(IPHONE3_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1; then \
+				echo "✓ iPhone-3 → http://localhost:$(IPHONE3_PORT) ($${i}s)"; \
+				exit 0; \
+			fi; \
+		done; \
+		echo "✗ failed after 15s — cat /tmp/pikmin-iphone3.log"; \
+	fi
+
 stop-ipad: ## Stop iPad server only
 	$(call KILL_PORT,$(IPAD_PORT))
 
@@ -169,6 +202,9 @@ stop-iphone: ## Stop iPhone server only
 
 stop-iphone2: ## Stop iPhone-2 server only
 	$(call KILL_PORT,$(IPHONE2_PORT))
+
+stop-iphone3: ## Stop iPhone-3 server only
+	$(call KILL_PORT,$(IPHONE3_PORT))
 
 # wait-for-port helper: poll up to 12s for the port to free after
 # stop-*. Necessary because graceful shutdown (broadcast + DVT close)
@@ -198,11 +234,19 @@ restart-iphone2: stop-iphone2 ## Restart iPhone-2 server (stop → clear GPS →
 	done
 	@$(MAKE) start-iphone2
 
+restart-iphone3: stop-iphone3 ## Restart iPhone-3 server (stop → clear GPS → start)
+	-@$(MAKE) clear-iphone3
+	@for i in $$(seq 1 24); do \
+		lsof -iTCP:$(IPHONE3_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
+	@$(MAKE) start-iphone3
+
 restart-all: stop ## Restart all servers
 	@sleep 1
 	@$(MAKE) start-all
 
-start-all: tunnel start-ipad start-iphone start-iphone2 ## Start ALL servers (iPad + iPhone + iPhone-2)
+start-all: tunnel start-ipad start-iphone start-iphone2 start-iphone3 ## Start ALL servers (iPad + iPhone + iPhone-2 + iPhone-3)
 
 up: osrm-up tunnel start-all ## Start EVERYTHING (OSRM + tunneld + both servers)
 
@@ -258,6 +302,8 @@ status: ## Show running status (all servers + tunneld + devices)
 		echo "  ✓ iPhone   → :$(IPHONE_PORT)" || echo "  ✗ iPhone   (:$(IPHONE_PORT))"
 	@lsof -iTCP:$(IPHONE2_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
 		echo "  ✓ iPhone-2 → :$(IPHONE2_PORT)" || echo "  ✗ iPhone-2 (:$(IPHONE2_PORT))"
+	@lsof -iTCP:$(IPHONE3_PORT) -sTCP:LISTEN -nP >/dev/null 2>&1 && \
+		echo "  ✓ iPhone-3 → :$(IPHONE3_PORT)" || echo "  ✗ iPhone-3 (:$(IPHONE3_PORT))"
 	@echo "== USB devices =="
 	@pymobiledevice3 usbmux list 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'  {x[\"DeviceName\"]} ({x[\"ProductType\"]}/{x[\"ProductVersion\"]}) {x[\"UniqueDeviceID\"][:12]}') for x in d]" 2>/dev/null || echo "  (none)"
 
@@ -276,5 +322,8 @@ clear-iphone: tunnel ## Clear simulated location on iPhone
 clear-iphone2: tunnel ## Clear simulated location on iPhone-2
 	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(IPHONE2_UDID_FLAG) $(HOME_FLAG)
 
+clear-iphone3: tunnel ## Clear simulated location on iPhone-3
+	@cd $(dir $(abspath $(lastword $(MAKEFILE_LIST)))) && uv run clear.py $(IPHONE3_UDID_FLAG) $(HOME_FLAG)
+
 logs: ## Tail all logs
-	@tail -f /tmp/pikmin-server.log /tmp/pikmin-ipad.log /tmp/pikmin-iphone.log /tmp/pikmin-iphone2.log /tmp/pikmin-tunneld.log 2>/dev/null
+	@tail -f /tmp/pikmin-server.log /tmp/pikmin-ipad.log /tmp/pikmin-iphone.log /tmp/pikmin-iphone2.log /tmp/pikmin-iphone3.log /tmp/pikmin-tunneld.log 2>/dev/null
